@@ -99,6 +99,8 @@ const emailOf = (office, username) => username.trim().toLowerCase() + '@' + offi
 const P = '#5B1A7A';
 const WIDE_PX = 900;            // ≥ นี้ = เดสก์ท็อป (แผนที่ซ้าย รายการขวา)
 const FAR_M = 50;               // หมุดห่างแนวสายเกินนี้ = เตือน
+// รหัสยืนยันการลบงาน — กันกดลบโดยไม่ตั้งใจเท่านั้น (สิทธิ์ลบจริงคุมด้วย RLS: เฉพาะผู้ตรวจในการไฟฟ้าตน)
+const DELETE_PIN = '509758';
 const M = ['ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'];
 const TYPES = ['ระยะห่างไม่ถึงเกณฑ์','กิ่งค้างบนสาย','ไม่เก็บกิ่ง','ตัดไม่ครบ','อื่นๆ'];
 // สถานะจุดบกพร่อง (ค่าตาม DB schema)
@@ -229,6 +231,14 @@ const db = {
     if (S.online) { try { return { code: await srv[type](p), pending: false }; } catch (e) { if (!isNetErr(e)) throw e; } }
     await queue.add(type, p);
     return { code: local[type](p, true), pending: true };
+  },
+  // ── ลบงาน (Feeder ทั้งสาย): รูปใน Storage ก่อน (policy อ้าง defect ที่ยังอยู่) แล้วลบ feeder → ช่วง/จุด/ประวัติลบตาม cascade ──
+  async deleteFeeder(f) {
+    if (!LIVE) { S.feeders = S.feeders.filter(x => x.id !== f.id); S.defects = S.defects.filter(d => d.feeder_id !== f.id); return; }
+    const paths = S.defects.filter(d => d.feeder_id === f.id).flatMap(d => d.events.flatMap(e => e.photos.map(p => p.path))).filter(Boolean);
+    if (paths.length) { const { error } = await sb.storage.from('photos').remove(paths); if (error) console.warn('ลบรูปไม่สำเร็จ (ยังลบงานต่อ)', error); }
+    const gone = await q(sb.from('feeders').delete().eq('id', f.id).select('id'), 'deleteFeeder');
+    if (!gone.length) throw new Error('ไม่มีสิทธิ์ลบงานนี้');
   },
   // ── นำเข้า: ex = feeder เดิม (หรือ null), mode append|replace, segs = ช่วงที่จะเพิ่ม → คืน feeder id ──
   async importFeeder(ex, code, line, contractorId, mode, segs) {
@@ -1129,7 +1139,8 @@ function vReport() {
     <div data-noprint style="max-width:1000px;margin:0 auto;padding:16px 16px 0;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
       <button data-act="print" class="bp" style="padding:0 18px">พิมพ์ / ส่งออก PDF</button>
       ${canClose ? `<button data-act="closeFeeder" class="bp" style="padding:0 18px;background:#2E7D32">✓ ปิดงาน Feeder ${esc(f.code)}</button>` : ''}
-      ${st.allPass ? '' : `<div style="font-size:15px;color:#5E5566">ปิดงานได้เมื่อทุกช่วงผ่าน (ค้าง ${f.segments.length - st.passN} ช่วง)</div>`}</div>
+      ${st.allPass ? '' : `<div style="font-size:15px;color:#5E5566">ปิดงานได้เมื่อทุกช่วงผ่าน (ค้าง ${f.segments.length - st.passN} ช่วง)</div>`}
+      <button data-act="delStart" class="bo" style="margin-left:auto;padding:0 18px;border-color:#B3261E;color:#B3261E">ลบงาน</button></div>
     <div data-rwrap style="max-width:1000px;margin:12px auto 32px;padding:0 16px"><div data-rcard style="background:#fff;border:1px solid #E3DCE8;border-radius:12px;padding:24px;display:flex;flex-direction:column;gap:22px">
       <div style="display:flex;gap:14px;align-items:center;border-bottom:3px solid ${P};padding-bottom:16px;flex-wrap:wrap">
         <div style="flex:none;width:52px;height:52px;border-radius:12px;background:${P};color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800">กฟภ.</div>
@@ -1206,6 +1217,23 @@ function vNotif() {
     ${S.notifs.map(n => `<button data-act="openNotif" data-arg="${n.id}" style="display:flex;gap:12px;align-items:flex-start;text-align:left;padding:12px 16px;border:0;border-bottom:1px solid #ECE6EF;background:#fff"><span class="ico" style="width:30px;height:30px;border-radius:6px;background:#E87500">⧗</span><span style="flex:1;min-width:0"><span style="display:block;font-size:15px;font-weight:700;color:#1C1324">${esc(n.text)}</span><span style="display:block;font-size:13px;color:#5E5566">${esc(n.sub)} · ${fmtAt(n.at)}</span></span></button>`).join('')}
     ${S.notifs.length ? '' : '<div style="padding:24px 16px;text-align:center;color:#5E5566;font-size:15px">ยังไม่มีการแจ้งเตือน</div>'}</div>`;
 }
+// ลบงาน: ชั้นที่ 1 สรุปสิ่งที่จะหาย → ชั้นที่ 2 กรอกรหัสยืนยัน
+function vDelete() {
+  const f = curF(); if (!S.del || !f) return '';
+  const ds = dOf(f.id), photos = ds.reduce((a, d) => a + d.events.reduce((b, e) => b + e.photos.length, 0), 0), step1 = S.del.step === 1;
+  const btn = (act, label, red, dis) => `<button data-act="${act}" ${dis ? 'disabled' : ''} style="flex:1;height:52px;border-radius:12px;font-size:16px;font-weight:800;opacity:${dis ? .6 : 1};${red ? 'border:0;background:#B3261E;color:#fff' : 'border:1.5px solid #C9BED1;background:#fff;color:#1C1324'}">${label}</button>`;
+  return `<div data-noprint data-act="noop" style="position:absolute;inset:0;z-index:1400;background:rgba(28,19,36,.6);display:flex;align-items:center;justify-content:center;padding:20px">
+    <div style="width:min(100%,420px);background:#fff;border-radius:18px;box-shadow:0 12px 40px rgba(0,0,0,.35);overflow:hidden">
+      <div style="background:#B3261E;color:#fff;padding:16px 20px"><div style="font-size:13px;font-weight:700;opacity:.9">ยืนยันขั้นที่ ${S.del.step} จาก 2</div><div style="font-size:19px;font-weight:800">ลบงาน Feeder <span class="mono">${esc(f.code)}</span></div></div>
+      <div style="padding:18px 20px;display:flex;flex-direction:column;gap:14px">
+        ${step1 ? `<div style="font-size:15px">${esc(f.line)}<br><b style="color:#B3261E">ข้อมูลต่อไปนี้จะถูกลบถาวร กู้คืนไม่ได้</b></div>
+          <div style="background:#FDE7E7;border-radius:12px;padding:12px 14px;font-size:15px;color:#8E1B1B;line-height:1.7">• ช่วงงานตัด ${f.segments.length} ช่วง (${fStats(f).km.toFixed(2)} กม.)<br>• จุดบกพร่อง ${ds.length} จุด พร้อมประวัติการตรวจ<br>• รูปถ่าย ${photos} รูป</div>
+          <div style="display:flex;gap:10px">${btn('delCancel', 'ยกเลิก')}${btn('delNext', 'ต่อไป', true)}</div>`
+        : `<label class="lbl"><span>กรอกรหัสยืนยันการลบงาน</span><input class="inp mono" data-in="del.pin" type="password" inputmode="numeric" autocomplete="off" maxlength="6" value="${esc(S.del.pin)}" style="text-align:center;font-size:24px;letter-spacing:8px"></label>
+          ${S.del.err ? `<div style="font-size:15px;font-weight:700;color:#B3261E">${esc(S.del.err)}</div>` : ''}
+          <div style="display:flex;gap:10px">${btn('delBack', 'ย้อนกลับ')}${btn('delConfirm', S.busy ? 'กำลังลบ…' : 'ลบถาวร', true, S.busy)}</div>`}
+      </div></div></div>`;
+}
 const vToast = () => S.toast ? `<div data-noprint style="position:absolute;z-index:1300;left:50%;top:12px;transform:translateX(-50%);width:max-content;max-width:calc(100% - 24px);padding:12px 18px;border-radius:12px;background:${TOAST_BG[S.toast.kind] || '#1C1324'};color:#fff;font-size:15px;font-weight:700;box-shadow:0 6px 20px rgba(0,0,0,.3)">${esc(S.toast.text)}</div>` : '';
 
 // ════════════════════════════════════════════════════════════════
@@ -1214,9 +1242,10 @@ const vToast = () => S.toast ? `<div data-noprint style="position:absolute;z-ind
 const shell = document.getElementById('shell');
 function render() {
   const sc = {}; shell.querySelectorAll('[data-scroll]').forEach(el => { sc[el.dataset.scroll] = el.scrollTop; });
+  if (/feeder|report|fdash/.test(S.screen) && !curF()) Object.assign(S, { screen: 'dash', cur: null, sheet: null, draft: null, del: null });
   const f = curF(), screen = S.screen === 'login' ? vLogin() : S.screen === 'dash' ? vDash() : S.screen === 'import' ? vImport()
     : !f ? '' : S.screen === 'feeder' ? vFeeder() : S.screen === 'report' ? vReport() : S.screen === 'fdash' ? vFDash() : '';
-  shell.innerHTML = vHeader() + `<div data-main style="flex:1;min-height:0;position:relative;display:flex;flex-direction:column">${screen}${vSheet()}${vNotif()}${vToast()}</div>`;
+  shell.innerHTML = vHeader() + `<div data-main style="flex:1;min-height:0;position:relative;display:flex;flex-direction:column">${screen}${vSheet()}${vNotif()}${vDelete()}${vToast()}</div>`;
   shell.querySelectorAll('[data-scroll]').forEach(el => { if (sc[el.dataset.scroll]) el.scrollTop = sc[el.dataset.scroll]; });
   const ms = shell.querySelector('[data-slot=map]'); if (ms) ms.replaceWith(mapEl);
   const mn = shell.querySelector('[data-slot=mini]'); if (mn) mn.replaceWith(miniEl);
@@ -1245,6 +1274,17 @@ const ACT = {
   passDefect,
   print() { const t = document.title, f = curF(); document.title = 'รายงาน ' + f.code + (f.line ? ' ' + f.line : ''); window.print(); document.title = t; },
   closeFeeder,
+  delStart() {
+    if (LIVE && !S.online) return showToast('ไม่มีสัญญาณ — การลบงานต้องออนไลน์', 'off');
+    if (S.queue) return showToast('ยังมีข้อมูลรอส่ง ' + S.queue + ' รายการ — ส่งให้ครบก่อนลบงาน', 'err', 6000);
+    set({ del: { step: 1, pin: '', err: null } });
+  },
+  delCancel: () => set({ del: null }), delNext: () => set({ del: { step: 2, pin: '', err: null } }), delBack: () => set({ del: { step: 1, pin: '', err: null } }),
+  delConfirm() {
+    if (S.del.pin !== DELETE_PIN) return set({ del: { ...S.del, pin: '', err: 'รหัสไม่ถูกต้อง' } });
+    const f = curF();
+    run(async () => { await db.deleteFeeder(f); S.del = null; return ['ลบงาน ' + f.code + ' แล้ว', 'ok', () => set({ screen: 'dash', cur: null })]; });
+  },
   closeSheet, saveSheet: () => ({ defect: saveDefect, fix: saveFix, reject: saveReject })[S.sheet](),
   draftSeg: seq => set({ draft: { ...S.draft, seq: +seq, manual: true } }),
   draftType: i => set({ draft: { ...S.draft, type: TYPES[+i] }, err: null }),

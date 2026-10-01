@@ -197,6 +197,10 @@ create policy photos_read on storage.objects for select to authenticated
   using (bucket_id = 'photos' and exists (select 1 from defects d where d.id::text = (storage.foldername(name))[2] and can_see_feeder(d.feeder_id)));
 create policy photos_insert on storage.objects for insert to authenticated
   with check (bucket_id = 'photos' and exists (select 1 from defects d where d.id::text = (storage.foldername(name))[2] and can_see_feeder(d.feeder_id)));
+-- ลบงาน: ผู้ตรวจลบรูปของ feeder ในการไฟฟ้าตน (ต้องลบรูปก่อนลบ feeder เพราะอ้าง defect)
+drop policy if exists photos_delete on storage.objects;
+create policy photos_delete on storage.objects for delete to authenticated
+  using (bucket_id = 'photos' and exists (select 1 from defects d where d.id::text = (storage.foldername(name))[2] and can_edit_feeder(d.feeder_id)));
 
 -- ════════════════════════════════════════════════════════════════
 -- REALTIME
