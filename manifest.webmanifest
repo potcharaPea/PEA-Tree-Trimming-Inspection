@@ -1,7 +1,7 @@
 {
-  "name": "ระบบตรวจรับงานตัดต้นไม้ กฟภ.",
-  "short_name": "ตรวจตัดต้นไม้",
-  "description": "PEA Tree Trimming Inspection — ตรวจรับงานตัดต้นไม้ตามแนวสาย",
+  "name": "PEA Tree Trimming Inspection",
+  "short_name": "PEA Tree Trimming Inspection",
+  "description": "ระบบตรวจรับงานตัดต้นไม้ กฟภ.",
   "lang": "th",
   "start_url": "./",
   "scope": "./",
