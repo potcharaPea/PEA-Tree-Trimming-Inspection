@@ -883,8 +883,18 @@ function vLogin() {
         <button data-act="login" style="height:56px;margin-top:6px;border:0;border-radius:12px;background:${P};color:#fff;font-size:18px;font-weight:700">${S.busy ? 'กำลังเข้าสู่ระบบ…' : S.role === 'inspector' ? 'เข้าสู่ระบบ (ผู้ตรวจ)' : 'เข้าสู่ระบบ (ผู้รับจ้าง)'}</button>
       </div>
       <div style="font-size:14px;color:#5E5566;text-align:center;text-wrap:pretty">ผู้รับจ้างจะเห็นเฉพาะ Feeder ที่ได้รับมอบหมายเท่านั้น<br>ชื่อผู้ใช้และรหัสผ่านออกให้โดยการไฟฟ้า</div>
+      <button data-act="admLoginOpen" style="align-self:center;height:44px;padding:0 18px;border:1.5px solid ${P};border-radius:22px;background:#fff;color:${P};font-size:15px;font-weight:700">⚙ จัดการระบบ</button>
       <button data-act="credits" data-arg="1" style="align-self:center;height:44px;padding:0 18px;border:1.5px solid #C9BED1;border-radius:22px;background:#fff;color:${P};font-size:15px;font-weight:700">เครดิตผู้พัฒนา</button>
     </div>
+    ${S.admLogin ? `<div data-act="noop" style="position:absolute;inset:0;z-index:1400;background:rgba(28,19,36,.55);display:flex;align-items:center;justify-content:center;padding:20px">
+      <div style="width:min(100%,400px);background:#fff;border-radius:18px;box-shadow:0 12px 40px rgba(0,0,0,.35);overflow:hidden">
+        <div style="background:${P};color:#fff;padding:18px 20px"><div style="font-size:19px;font-weight:800">⚙ จัดการระบบ</div><div style="font-size:14px;opacity:.92">สำหรับผู้ดูแลระบบ · ${esc(officeName(S.office))}</div></div>
+        <div style="padding:18px 20px;display:flex;flex-direction:column;gap:12px">
+          <label class="lbl"><span>ชื่อผู้ใช้ผู้ดูแลระบบ</span><input class="inp" data-in="admLogin.user" value="${esc(S.admLogin.user)}" autocomplete="username" autocapitalize="off"></label>
+          <label class="lbl"><span>รหัสผ่าน</span><input class="inp" type="password" data-in="admLogin.pw" value="${esc(S.admLogin.pw)}" autocomplete="current-password"></label>
+          ${S.admLogin.err ? `<div style="font-size:15px;font-weight:700;color:#B3261E">${esc(S.admLogin.err)}</div>` : ''}
+          <div style="display:flex;gap:10px"><button data-act="admLoginCancel" class="bo" style="flex:1;height:52px">ยกเลิก</button><button data-act="admLoginGo" class="bp" ${S.busy ? 'disabled' : ''} style="flex:1;height:52px">${S.busy ? 'กำลังตรวจสอบ…' : 'เข้าสู่การจัดการ'}</button></div>
+        </div></div></div>` : ''}
     ${S.credits ? `<div data-act="credits" data-arg="" style="position:absolute;inset:0;z-index:1400;background:rgba(28,19,36,.55);display:flex;align-items:center;justify-content:center;padding:20px">
       <div data-act="noop" style="width:min(100%,400px);background:#fff;border-radius:18px;box-shadow:0 12px 40px rgba(0,0,0,.35);overflow:hidden">
         <div style="background:${P};color:#fff;padding:18px 20px;display:flex;align-items:center;gap:12px"><div style="flex:1;min-width:0"><div style="font-size:19px;font-weight:800">เครดิตผู้พัฒนา</div><div style="font-size:14px;opacity:.92">ระบบตรวจรับงานตัดต้นไม้ กฟภ.</div></div>
@@ -917,7 +927,6 @@ function vDash() {
   return `<div data-scroll="dash" class="scroll"><div style="max-width:1200px;margin:0 auto;padding:20px 16px 120px;display:flex;flex-direction:column;gap:18px">
     <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap">
       <div><div style="font-size:15px;color:#5E5566">${insp ? 'ผู้ตรวจงาน' : 'ผู้รับจ้าง'}</div><div style="font-size:26px;font-weight:800;line-height:1.25">${insp ? 'ภาพรวมงานตรวจรับ' : 'งานที่ต้องแก้ไข'}</div></div>
-      ${S.me.is_admin ? `<button data-act="goAdmin" class="bo" style="padding:0 18px;display:flex;align-items:center;gap:6px">⚙ จัดการระบบ</button>` : ''}
       ${insp && S.wide ? `<button data-act="goImport" class="bp" style="padding:0 20px;display:flex;align-items:center;gap:8px"><span style="font-size:22px;line-height:1">+</span>นำเข้า Feeder</button>` : ''}</div>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px">${tiles.map(t => tile(t[0], t[1], t[2], true)).join('')}</div>
     <div style="font-size:19px;font-weight:700;margin-top:4px">${insp ? 'Feeder ทั้งหมด' : 'Feeder ที่ได้รับมอบหมาย'}</div>
@@ -1220,6 +1229,19 @@ function vAdmin() {
         <div style="padding:18px 20px;display:flex;flex-direction:column;gap:12px">
           <label class="lbl"><span>รหัสผ่านใหม่ (อย่างน้อย 6 ตัว)</span><input class="inp" data-in="adm.modal.pw" type="text" autocomplete="off" value="${esc(a.modal.pw)}"></label>
           <div style="display:flex;gap:10px"><button data-act="admPwCancel" class="bo" style="flex:1;height:50px">ยกเลิก</button><button data-act="admPwSave" class="bp" ${S.busy ? 'disabled' : ''} style="flex:1;height:50px">${S.busy ? 'กำลังบันทึก…' : 'บันทึก'}</button></div></div></div></div>` : '';
+  const cf = a.confirm, cu = cf && a.users.find(x => x.id === cf.id);
+  const cbtn = (act, label, red) => `<button data-act="${act}" ${red && S.busy ? 'disabled' : ''} style="flex:1;height:52px;border-radius:12px;font-size:16px;font-weight:800;${red ? 'border:0;background:#B3261E;color:#fff' : 'border:1.5px solid #C9BED1;background:#fff;color:#1C1324'}">${label}</button>`;
+  const confirm = cu ? `<div data-noprint data-act="noop" style="position:absolute;inset:0;z-index:1400;background:rgba(28,19,36,.6);display:flex;align-items:center;justify-content:center;padding:20px">
+      <div style="width:min(100%,420px);background:#fff;border-radius:18px;overflow:hidden;box-shadow:0 12px 40px rgba(0,0,0,.35)">
+        <div style="background:#B3261E;color:#fff;padding:16px 20px"><div style="font-size:13px;font-weight:700;opacity:.9">ยืนยันขั้นที่ ${cf.step} จาก 2</div><div style="font-size:19px;font-weight:800">ลบบัญชี <span class="mono">${esc(cu.username)}</span></div></div>
+        <div style="padding:18px 20px;display:flex;flex-direction:column;gap:14px">
+          ${cf.step === 1 ? `<div style="font-size:15px">${ROLE_TH[cu.role]} · ${esc(cu.role === 'contractor' ? cu.company || '–' : cu.full_name || '–')} · ${esc(officeName(cu.office_id))}</div>
+            <div style="background:#FDE7E7;border-radius:12px;padding:12px 14px;font-size:15px;color:#8E1B1B;line-height:1.6">• บัญชีนี้จะเข้าสู่ระบบไม่ได้อีก<br>• ถ้ามีประวัติในระบบ (เคยบันทึกงาน/ส่งหลักฐาน) จะ <b>ปิดบัญชี</b> แทนการลบ เพื่อเก็บประวัติไว้ — เปิดกลับได้<br>• ถ้ายังไม่มีประวัติ จะ <b>ลบถาวร</b></div>
+            <div style="display:flex;gap:10px">${cbtn('admDelCancel', 'ยกเลิก')}${cbtn('admDelNext', 'ต่อไป', true)}</div>`
+          : `<label class="lbl"><span>กรอกรหัสยืนยันการลบ</span><input class="inp mono" data-in="adm.confirm.pin" type="password" inputmode="numeric" autocomplete="off" maxlength="6" value="${esc(cf.pin)}" style="text-align:center;font-size:24px;letter-spacing:8px"></label>
+            ${cf.err ? `<div style="font-size:15px;font-weight:700;color:#B3261E">${esc(cf.err)}</div>` : ''}
+            <div style="display:flex;gap:10px">${cbtn('admDelBack', 'ย้อนกลับ')}${cbtn('admDelConfirm', S.busy ? 'กำลังลบ…' : 'ลบบัญชี', true)}</div>`}
+        </div></div></div>` : '';
   return `<div data-scroll="admin" class="scroll"><div style="max-width:1000px;margin:0 auto;padding:20px 16px 40px;display:flex;flex-direction:column;gap:16px">
     <div><div style="font-size:15px;color:#5E5566">ผู้ดูแลระบบ</div><div style="font-size:26px;font-weight:800;line-height:1.25">จัดการระบบ</div></div>
     <div class="card"><div style="font-size:18px;font-weight:800">การไฟฟ้า <span class="sub">· ${S.offices.length} แห่ง</span></div>
@@ -1236,7 +1258,7 @@ function vAdmin() {
       ${form}
       ${a.loading ? '<div style="color:#5E5566;padding:12px 0">กำลังโหลดรายชื่อ…</div>' : users.map(userRow).join('') || '<div style="color:#5E5566;padding:12px 0">ยังไม่มีผู้ใช้</div>'}
       <div style="font-size:13px;color:#5E5566;border-top:1px solid #ECE6EF;padding-top:10px">ลบ: ลบจริงได้เฉพาะบัญชีที่ยังไม่มีประวัติในระบบ ถ้ามีประวัติแล้วจะปิดบัญชีแทน (ประวัติการตรวจยังอยู่ครบ) · ปิดบัญชีแล้วเข้าสู่ระบบไม่ได้ เปิดกลับได้</div></div>
-  </div></div>${modal}`;
+  </div></div>${modal}${confirm}`;
 }
 
 function vReport() {
@@ -1366,7 +1388,7 @@ const ACT = {
   login, credits: v => set({ credits: !!v }),
   logout,
   toggleOnline: () => LIVE ? flush() : toggleOnline(), toggleNotif: () => set({ showNotif: !S.showNotif, unread: 0 }),
-  back() { if (S.sheet) return closeSheet(); if (S.screen === 'feeder' && S.panel.mode !== 'list') return panelBack(); if (S.screen === 'report') return openFeeder(S.cur); set({ screen: 'dash', cur: null, imp: { step: 'pick' } }); },
+  back() { if (S.screen === 'admin') return logout(); if (S.sheet) return closeSheet(); if (S.screen === 'feeder' && S.panel.mode !== 'list') return panelBack(); if (S.screen === 'report') return openFeeder(S.cur); set({ screen: 'dash', cur: null, imp: { step: 'pick' } }); },
   goImport: () => set({ screen: 'import', imp: { step: 'pick' } }),
   openFeeder, report: id => set({ screen: 'report', cur: id }), fdash: id => set({ screen: 'fdash', cur: id }),
   segOnMap(seq) { openFeeder(S.cur); selectSeg(+seq); },
@@ -1395,8 +1417,21 @@ const ACT = {
     run(async () => { await db.deleteFeeder(f); S.del = null; return ['ลบงาน ' + f.code + ' แล้ว', 'ok', () => set({ screen: 'dash', cur: null })]; });
   },
   // ── จัดการระบบ ──
+  admLoginOpen: () => set({ admLogin: { user: '', pw: '', err: null } }),
+  admLoginCancel: () => set({ admLogin: null }),
+  // ยืนยันด้วยบัญชีผู้ดูแลระบบ (is_admin) → เข้าหน้าจัดการ ไม่โหลดงาน/GPS/realtime
+  async admLoginGo() {
+    const a = S.admLogin;
+    if (!a.user.trim() || !a.pw) return set({ admLogin: { ...a, err: 'กรุณากรอกชื่อผู้ใช้และรหัสผ่าน' } });
+    if (LIVE && !S.online) return set({ admLogin: { ...a, err: 'ไม่มีสัญญาณ — การจัดการระบบต้องออนไลน์' } });
+    set({ busy: true });
+    let u; try { u = await db.signIn(S.office, a.user, a.pw); } catch (e) { return set({ busy: false, admLogin: { ...a, err: e.message } }); }
+    if (!u) return set({ busy: false, admLogin: { ...a, pw: '', err: 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง' } });
+    if (!u.is_admin) { await db.signOut(); return set({ busy: false, admLogin: { ...a, pw: '', err: 'บัญชีนี้ไม่ใช่ผู้ดูแลระบบ' } }); }
+    Object.assign(S, { me: u, busy: false, admLogin: null });
+    ACT.goAdmin();
+  },
   goAdmin() {
-    if (LIVE && !S.online) return showToast('ไม่มีสัญญาณ — การจัดการระบบต้องออนไลน์', 'off');
     set({ screen: 'admin', adm: { users: [], loading: true, filter: S.me.office, office: { id: '', name: '' }, newRole: null, form: null, modal: null } });
     admLoad();
   },
@@ -1425,8 +1460,14 @@ const ACT = {
     const u = S.adm.users.find(x => x.id === id);
     admRun(async () => { await admApi.setActive(id, !u.active); return (u.active ? 'ปิดบัญชี ' : 'เปิดบัญชี ') + u.username + ' แล้ว'; });
   },
-  admDel(id) {
-    const u = S.adm.users.find(x => x.id === id);
+  admDel: id => set({ adm: { ...S.adm, confirm: { step: 1, id, pin: '', err: null } } }),
+  admDelCancel: () => set({ adm: { ...S.adm, confirm: null } }),
+  admDelNext: () => set({ adm: { ...S.adm, confirm: { ...S.adm.confirm, step: 2, pin: '', err: null } } }),
+  admDelBack: () => set({ adm: { ...S.adm, confirm: { ...S.adm.confirm, step: 1, pin: '', err: null } } }),
+  admDelConfirm() {
+    const cf = S.adm.confirm, id = cf.id, u = S.adm.users.find(x => x.id === id);
+    if (cf.pin !== DELETE_PIN) return set({ adm: { ...S.adm, confirm: { ...cf, pin: '', err: 'รหัสไม่ถูกต้อง' } } });
+    S.adm.confirm = null;
     admRun(async () => { const r = await admApi.remove(id); return r.deleted ? 'ลบ ' + u.username + ' แล้ว' : u.username + ' มีประวัติในระบบ — ปิดบัญชีแทนการลบ'; });
   },
   closeSheet, saveSheet: () => ({ defect: saveDefect, fix: saveFix, reject: saveReject })[S.sheet](),
@@ -1452,7 +1493,7 @@ shell.addEventListener('change', e => {
   if (t.dataset.in === 'office' && !LIVE) S.loginId = defaultUser(t.value, S.role);
   if (t.dataset.in && 'rr' in t.dataset) render();
 });
-shell.addEventListener('keydown', e => { if (e.key === 'Enter' && S.screen === 'login' && e.target.tagName === 'INPUT') login(); });
+shell.addEventListener('keydown', e => { if (e.key === 'Enter' && S.screen === 'login' && e.target.tagName === 'INPUT') S.admLogin ? ACT.admLoginGo() : login(); });
 new ResizeObserver(() => { const w = shell.clientWidth >= WIDE_PX; if (w !== S.wide) set({ wide: w, legend: w }); else if (map) map.invalidateSize(); }).observe(shell);
 S.wide = shell.clientWidth >= WIDE_PX; S.legend = S.wide;
 render();
