@@ -21,8 +21,10 @@ create table if not exists profiles (
   full_name text not null default '',
   role      text not null check (role in ('inspector', 'contractor')),
   company   text,                      -- ชื่อบริษัท/หจก. (ผู้รับจ้าง)
+  is_admin  boolean not null default false,   -- ผู้ดูแลระบบ: เพิ่มการไฟฟ้า/ผู้ใช้ได้ทุกแห่ง
   unique (office_id, username)
 );
+alter table profiles add column if not exists is_admin boolean not null default false;   -- สำหรับฐานข้อมูลที่สร้างก่อนมีคอลัมน์นี้
 
 create table if not exists feeders (
   id         uuid primary key default gen_random_uuid(),
@@ -120,6 +122,8 @@ language sql stable security definer set search_path = public as $$ select offic
 create or replace function is_inspector() returns boolean
 language sql stable security definer set search_path = public as $$ select exists (select 1 from profiles where id = auth.uid() and role = 'inspector') $$;
 -- เห็น feeder: ผู้ตรวจ = ทุก feeder ในการไฟฟ้าตน, ผู้รับจ้าง = เฉพาะที่ผูกไว้
+create or replace function is_sysadmin() returns boolean
+language sql stable security definer set search_path = public as $ select coalesce((select is_admin from profiles where id = auth.uid()), false) $;
 create or replace function can_see_feeder(f uuid) returns boolean
 language sql stable security definer set search_path = public as $$
   select exists (select 1 from feeders x where x.id = f and x.office_id = my_office()
@@ -141,10 +145,13 @@ alter table defect_events      enable row level security;
 
 -- หน้า login ต้องเห็นรายชื่อการไฟฟ้าก่อนล็อกอิน
 drop policy if exists offices_read on offices;
+drop policy if exists offices_write on offices;
 create policy offices_read on offices for select using (true);
+create policy offices_write on offices for insert to authenticated with check (is_sysadmin());
 
 drop policy if exists profiles_read on profiles;
-create policy profiles_read on profiles for select to authenticated using (office_id = my_office());
+-- ผู้ใช้เห็นคนในการไฟฟ้าตน · ผู้ดูแลระบบเห็นทุกคน (การสร้าง/แก้บัญชีทำผ่าน Edge Function admin-users เท่านั้น)
+create policy profiles_read on profiles for select to authenticated using (office_id = my_office() or is_sysadmin());
 
 drop policy if exists feeders_read on feeders;
 drop policy if exists feeders_write on feeders;
@@ -223,4 +230,7 @@ exception when duplicate_object then null; end $$;
 -- select id, 'kce', 'romyen.co', 'ผู้ประสานงาน ร่มเย็น', 'contractor', 'หจก. ร่มเย็นการโยธา' from auth.users where email = 'romyen.co@kce.local';
 --
 -- เพิ่มการไฟฟ้าใหม่: insert into offices values ('xxx', 'กฟส.ชื่อใหม่');
+--
+-- ตั้งผู้ดูแลระบบ (จัดการการไฟฟ้าและผู้ใช้ในแอปได้ — ต้อง deploy Edge Function supabase/functions/admin-users ด้วย):
+-- update profiles set is_admin = true where office_id = 'kce' and username = 'admin';
 -- ════════════════════════════════════════════════════════════════

@@ -139,7 +139,7 @@ const TOAST_BG = { ok:'#1B5E20', off:'#2B2230', rt:'#B85C00', err:'#B3261E' };
 // ════════════════════════════════════════════════════════════════
 const MOCK_OFFICES = [ { id:'kce', name:'กฟส.คำชะอี' }, { id:'ktw', name:'กฟส.กันทรวิชัย' } ];
 const MOCK_USERS = [
-  { id:'somchai.j', username:'somchai.j', office:'kce', role:'inspector',  full_name:'สมชาย ใจดี' },
+  { id:'somchai.j', username:'somchai.j', office:'kce', role:'inspector',  full_name:'สมชาย ใจดี', is_admin:true },
   { id:'romyen.co', username:'romyen.co', office:'kce', role:'contractor', full_name:'ผู้ประสานงาน ร่มเย็น', company:'หจก. ร่มเย็นการโยธา' },
   { id:'thaipruek', username:'thaipruek', office:'kce', role:'contractor', full_name:'ผู้ประสานงาน ไทยพฤกษ์', company:'บริษัท ไทยพฤกษ์ เซอร์วิส จำกัด' },
   { id:'wichai.k',  username:'wichai.k',  office:'ktw', role:'inspector',  full_name:'วิชัย กล้าหาญ' },
@@ -169,9 +169,9 @@ const db = {
     return p && { ...p, office: p.office_id };
   },
   async signIn(office, username, password) {
-    if (!LIVE) return MOCK_USERS.find(x => x.office === office && x.username === username.trim()) || null;
+    if (!LIVE) { const u = MOCK_USERS.find(x => x.office === office && x.username === username.trim()); if (u && u.active === false) throw new Error('บัญชีนี้ถูกปิดการใช้งาน — ติดต่อผู้ดูแลระบบ'); return u || null; }
     const { data, error } = await sb.auth.signInWithPassword({ email: emailOf(office, username), password });
-    if (error) return null;
+    if (error) { if (/banned/i.test(error.message)) throw new Error('บัญชีนี้ถูกปิดการใช้งาน — ติดต่อผู้ดูแลระบบ'); return null; }
     const p = await db.profile(data.user.id);
     if (!p) { await sb.auth.signOut(); throw new Error('บัญชีนี้ยังไม่ได้ผูกโปรไฟล์ — ติดต่อผู้ดูแลระบบ'); }
     return p;
@@ -388,6 +388,49 @@ async function flush() {
   await refresh();
   if (err && !isNetErr(err)) showToast('ส่งข้อมูลที่ค้างไม่สำเร็จ: ' + err.message + ' — จะลองใหม่อัตโนมัติ', 'err', 7000);
   else if (n && !S.queue) showToast('ส่งข้อมูลที่ค้างในเครื่องครบแล้ว ' + n + ' รายการ', 'ok');
+}
+
+// ── ผู้ดูแลระบบ: การไฟฟ้า (insert ตรง, RLS เฉพาะ is_admin) + ผู้ใช้ (ผ่าน Edge Function admin-users) ──
+async function callAdmin(body) {
+  const { data, error } = await sb.functions.invoke('admin-users', { body });
+  if (error) { let msg = error.message; try { msg = (await error.context.json()).error || msg; } catch (e) {} throw new Error(msg); }
+  return data;
+}
+const admApi = {
+  async list() {
+    if (!LIVE) return MOCK_USERS.map(u => ({ ...u, office_id: u.office, active: u.active !== false }));
+    return (await callAdmin({ action: 'list' })).users;
+  },
+  async addOffice(id, name) {
+    if (!LIVE) { S.offices = [...S.offices, { id, name }]; return; }
+    const { error } = await sb.from('offices').insert({ id, name });
+    if (error) throw new Error(error.code === '23505' ? 'รหัสการไฟฟ้านี้มีอยู่แล้ว' : error.message);
+    S.offices = await q(sb.from('offices').select('*').order('name'), 'offices');
+  },
+  async create(f) {
+    if (!LIVE) {
+      if (MOCK_USERS.some(u => u.office === f.office_id && u.username === f.username)) throw new Error('ชื่อผู้ใช้นี้มีอยู่แล้วในการไฟฟ้านี้');
+      MOCK_USERS.push({ id: f.username + '@' + f.office_id, username: f.username, office: f.office_id, role: f.role, full_name: f.full_name, company: f.role === 'contractor' ? f.company : null });
+      return;
+    }
+    await callAdmin({ action: 'create', ...f });
+  },
+  async setPassword(id, password) { if (LIVE) await callAdmin({ action: 'set_password', user_id: id, password }); },
+  async setActive(id, active) { if (!LIVE) { MOCK_USERS.find(u => u.id === id).active = active; return; } await callAdmin({ action: 'set_active', user_id: id, active }); },
+  // ลบจริงถ้ายังไม่มีประวัติ · มีประวัติ → ปิดบัญชีแทน (คืน deleted: false)
+  async remove(id) {
+    if (!LIVE) { const i = MOCK_USERS.findIndex(u => u.id === id); MOCK_USERS.splice(i, 1); return { deleted: true }; }
+    return callAdmin({ action: 'delete', user_id: id });
+  }
+};
+async function admLoad() {
+  try { S.adm.users = await admApi.list(); } catch (e) { showToast('โหลดรายชื่อผู้ใช้ไม่สำเร็จ: ' + e.message, 'err', 7000); }
+  S.adm.loading = false; render();
+}
+async function admRun(work) {
+  if (S.busy) return; set({ busy: true });
+  try { const msg = await work(); S.adm.users = await admApi.list(); S.busy = false; showToast(msg, 'ok', 5000); }
+  catch (e) { S.busy = false; showToast(e.message, 'err', 7000); }
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -794,7 +837,7 @@ function vHeader() {
   if (S.screen === 'login') return '';
   const f = curF(), insp = isInsp();
   const t = { dash: ['ระบบตรวจรับงานตัดต้นไม้', insp ? 'ผู้ตรวจงาน' : 'ผู้รับจ้าง'],
-    import: ['นำเข้า Feeder', 'เลือกโฟลเดอร์ KMZ'], feeder: [f && f.code, f && f.line], report: ['รายงานสรุป ' + (f ? f.code : ''), f && f.line], fdash: ['ความคืบหน้า ' + (f ? f.code : ''), f && f.line] }[S.screen] || ['', ''];
+    import: ['นำเข้า Feeder', 'เลือกโฟลเดอร์ KMZ'], admin: ['จัดการระบบ', 'ผู้ดูแลระบบ'], feeder: [f && f.code, f && f.line], report: ['รายงานสรุป ' + (f ? f.code : ''), f && f.line], fdash: ['ความคืบหน้า ' + (f ? f.code : ''), f && f.line] }[S.screen] || ['', ''];
   const net = S.online ? { bg: 'rgba(255,255,255,.14)', fg: '#fff', dot: '#7CE08A', label: 'ออนไลน์' } : { bg: '#FFE082', fg: '#2B2230', dot: '#2B2230', label: 'ออฟไลน์' };
   const banner = !S.online ? { bg: '#2B2230', fg: '#FFE082', icon: '!', text: S.queue ? 'ออฟไลน์ — บันทึกไว้ในเครื่อง ' + S.queue + ' รายการ รอส่ง' : 'ออฟไลน์ — ข้อมูลที่บันทึกจะเก็บไว้ในเครื่อง รอส่ง' }
     : S.syncing ? { bg: '#FFEFD6', fg: '#7A3B00', icon: '↻', text: 'กลับมาออนไลน์ — กำลังส่ง ' + S.queue + ' รายการ…' }
@@ -874,6 +917,7 @@ function vDash() {
   return `<div data-scroll="dash" class="scroll"><div style="max-width:1200px;margin:0 auto;padding:20px 16px 120px;display:flex;flex-direction:column;gap:18px">
     <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap">
       <div><div style="font-size:15px;color:#5E5566">${insp ? 'ผู้ตรวจงาน' : 'ผู้รับจ้าง'}</div><div style="font-size:26px;font-weight:800;line-height:1.25">${insp ? 'ภาพรวมงานตรวจรับ' : 'งานที่ต้องแก้ไข'}</div></div>
+      ${S.me.is_admin ? `<button data-act="goAdmin" class="bo" style="padding:0 18px;display:flex;align-items:center;gap:6px">⚙ จัดการระบบ</button>` : ''}
       ${insp && S.wide ? `<button data-act="goImport" class="bp" style="padding:0 20px;display:flex;align-items:center;gap:8px"><span style="font-size:22px;line-height:1">+</span>นำเข้า Feeder</button>` : ''}</div>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px">${tiles.map(t => tile(t[0], t[1], t[2], true)).join('')}</div>
     <div style="font-size:19px;font-weight:700;margin-top:4px">${insp ? 'Feeder ทั้งหมด' : 'Feeder ที่ได้รับมอบหมาย'}</div>
@@ -1136,11 +1180,70 @@ function vFeeder() {
       ${mapCol}<div style="min-height:0;display:${wide || listOn ? 'flex' : 'none'};flex-direction:column;background:#fff;border-left:1px solid #E3DCE8">${panel}</div></div></div>`;
 }
 
+// ── หน้าจัดการระบบ (ผู้ดูแลระบบ) ──
+const ROLE_TH = { inspector: 'ผู้ตรวจ', contractor: 'ผู้รับจ้าง' };
+function vAdmin() {
+  const a = S.adm, fm = a.form, users = a.users.filter(u => !a.filter || u.office_id === a.filter);
+  const count = id => a.users.filter(u => u.office_id === id).length;
+  const lab = t => `<span style="font-size:14px;font-weight:700;color:#4A3F52">${t}</span>`;
+  const inp = (path, val, ph, extra) => `<input class="inp" data-in="${path}" value="${esc(val)}" placeholder="${ph}" ${extra || ''} style="height:48px;font-size:16px">`;
+  const officeOpts = sel => S.offices.map(o => `<option value="${o.id}"${o.id === sel ? ' selected' : ''}>${esc(o.name)}</option>`).join('');
+  const userRow = u => {
+    const self = u.id === S.me.id, badge = u.role === 'inspector' ? 'background:#F1E7F6;color:#4A1564' : 'background:#E8F0FB;color:#0D47A1';
+    const who = u.role === 'contractor' ? (u.company || '–') + (u.full_name ? ' · ' + u.full_name : '') : (u.full_name || '–');
+    return `<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:12px 0;border-top:1px solid #ECE6EF;opacity:${u.active ? 1 : .55}">
+      <div style="flex:1;min-width:200px">
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"><span class="mono" style="font-weight:700">${esc(u.username)}</span>
+          <span class="pill" style="${badge}">${ROLE_TH[u.role]}</span>${u.is_admin ? '<span class="pill" style="background:#5B1A7A;color:#fff">ผู้ดูแลระบบ</span>' : ''}${u.active ? '' : '<span class="pill" style="background:#EEEAF0;color:#3F3846">ปิดบัญชี</span>'}</div>
+        <div style="font-size:14px;color:#5E5566">${esc(who)} · ${esc(officeName(u.office_id))}</div></div>
+      ${self ? '<span style="font-size:13px;color:#5E5566">(บัญชีของคุณ)</span>' : `<div style="display:flex;gap:6px;flex-wrap:wrap">
+        <button data-act="admPw" data-arg="${u.id}" class="bo" style="height:40px;padding:0 12px;font-size:14px;border-radius:10px">ตั้งรหัสใหม่</button>
+        <button data-act="admToggle" data-arg="${u.id}" class="bo" style="height:40px;padding:0 12px;font-size:14px;border-radius:10px">${u.active ? 'ปิดบัญชี' : 'เปิดบัญชี'}</button>
+        <button data-act="admDel" data-arg="${u.id}" style="height:40px;padding:0 12px;font-size:14px;font-weight:700;border-radius:10px;border:1.5px solid #B3261E;background:#fff;color:#B3261E">ลบ</button></div>`}
+    </div>`;
+  };
+  const newBtn = (role, label) => `<button data-act="admNew" data-arg="${role}" class="bp" style="height:44px;padding:0 16px;font-size:15px">+ ${label}</button>`;
+  const form = a.newRole ? `<div style="background:#F6F3F8;border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:10px">
+      <div style="font-weight:800">เพิ่ม${ROLE_TH[a.newRole]}ใหม่</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));gap:10px">
+        <label class="lbl">${lab('การไฟฟ้า')}<select class="inp" data-in="adm.form.office_id" style="height:48px;font-size:16px;padding:0 10px">${officeOpts(fm.office_id)}</select></label>
+        <label class="lbl">${lab('ชื่อผู้ใช้ (a-z 0-9 . _ -)')}${inp('adm.form.username', fm.username, 'เช่น pea2', 'autocapitalize="off" autocomplete="off"')}</label>
+        ${a.newRole === 'contractor' ? `<label class="lbl">${lab('ชื่อบริษัท / หจก.')}${inp('adm.form.company', fm.company, 'เช่น หจก. ร่มเย็นการโยธา')}</label>` : ''}
+        <label class="lbl">${lab(a.newRole === 'contractor' ? 'ชื่อผู้ประสานงาน (ไม่บังคับ)' : 'ชื่อ-นามสกุล')}${inp('adm.form.full_name', fm.full_name, '')}</label>
+        <label class="lbl">${lab('รหัสผ่าน (อย่างน้อย 6 ตัว)')}${inp('adm.form.password', fm.password, '', 'type="text" autocomplete="off"')}</label>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end"><button data-act="admNew" data-arg="" class="bo" style="height:44px;padding:0 16px;font-size:15px">ยกเลิก</button>
+        <button data-act="admCreate" class="bp" ${S.busy ? 'disabled' : ''} style="height:44px;padding:0 18px;font-size:15px">${S.busy ? 'กำลังบันทึก…' : 'บันทึก'}</button></div></div>` : '';
+  const modal = a.modal ? `<div data-noprint data-act="noop" style="position:absolute;inset:0;z-index:1400;background:rgba(28,19,36,.6);display:flex;align-items:center;justify-content:center;padding:20px">
+      <div style="width:min(100%,400px);background:#fff;border-radius:18px;overflow:hidden;box-shadow:0 12px 40px rgba(0,0,0,.35)">
+        <div style="background:${P};color:#fff;padding:16px 20px;font-size:18px;font-weight:800">ตั้งรหัสผ่านใหม่ · <span class="mono">${esc(a.modal.username)}</span></div>
+        <div style="padding:18px 20px;display:flex;flex-direction:column;gap:12px">
+          <label class="lbl"><span>รหัสผ่านใหม่ (อย่างน้อย 6 ตัว)</span><input class="inp" data-in="adm.modal.pw" type="text" autocomplete="off" value="${esc(a.modal.pw)}"></label>
+          <div style="display:flex;gap:10px"><button data-act="admPwCancel" class="bo" style="flex:1;height:50px">ยกเลิก</button><button data-act="admPwSave" class="bp" ${S.busy ? 'disabled' : ''} style="flex:1;height:50px">${S.busy ? 'กำลังบันทึก…' : 'บันทึก'}</button></div></div></div></div>` : '';
+  return `<div data-scroll="admin" class="scroll"><div style="max-width:1000px;margin:0 auto;padding:20px 16px 40px;display:flex;flex-direction:column;gap:16px">
+    <div><div style="font-size:15px;color:#5E5566">ผู้ดูแลระบบ</div><div style="font-size:26px;font-weight:800;line-height:1.25">จัดการระบบ</div></div>
+    <div class="card"><div style="font-size:18px;font-weight:800">การไฟฟ้า <span class="sub">· ${S.offices.length} แห่ง</span></div>
+      ${S.offices.map(o => `<div style="display:flex;justify-content:space-between;gap:8px;padding:10px 0;border-top:1px solid #ECE6EF"><span><b>${esc(o.name)}</b> <span class="mono" style="font-size:13px;color:#5E5566">${esc(o.id)}</span></span><span style="color:#5E5566;font-size:14px">${count(o.id)} ผู้ใช้</span></div>`).join('')}
+      <div style="background:#F6F3F8;border-radius:12px;padding:14px;display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr));gap:10px;align-items:end">
+        <label class="lbl">${lab('รหัส (a-z 0-9)')}${inp('adm.office.id', a.office.id, 'เช่น mdh', 'autocapitalize="off" maxlength="10"')}</label>
+        <label class="lbl">${lab('ชื่อการไฟฟ้า')}${inp('adm.office.name', a.office.name, 'เช่น กฟส.เมืองมุกดาหาร')}</label>
+        <button data-act="admAddOffice" class="bp" ${S.busy ? 'disabled' : ''} style="height:48px;padding:0 16px;font-size:15px">+ เพิ่มการไฟฟ้า</button></div>
+      <div style="font-size:13px;color:#5E5566">รหัสใช้ต่อท้ายชื่อผู้ใช้ภายในระบบ ตั้งแล้วเปลี่ยนไม่ได้</div></div>
+    <div class="card"><div style="display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap">
+        <div style="font-size:18px;font-weight:800">ผู้ใช้ <span class="sub">· ${users.length} บัญชี</span></div>
+        <select class="inp" data-in="adm.filter" data-rr style="width:auto;height:44px;font-size:15px;padding:0 10px"><option value="">ทุกการไฟฟ้า</option>${officeOpts(a.filter)}</select></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">${newBtn('contractor', 'เพิ่มผู้รับจ้าง')}${newBtn('inspector', 'เพิ่มผู้ตรวจ')}</div>
+      ${form}
+      ${a.loading ? '<div style="color:#5E5566;padding:12px 0">กำลังโหลดรายชื่อ…</div>' : users.map(userRow).join('') || '<div style="color:#5E5566;padding:12px 0">ยังไม่มีผู้ใช้</div>'}
+      <div style="font-size:13px;color:#5E5566;border-top:1px solid #ECE6EF;padding-top:10px">ลบ: ลบจริงได้เฉพาะบัญชีที่ยังไม่มีประวัติในระบบ ถ้ามีประวัติแล้วจะปิดบัญชีแทน (ประวัติการตรวจยังอยู่ครบ) · ปิดบัญชีแล้วเข้าสู่ระบบไม่ได้ เปิดกลับได้</div></div>
+  </div></div>${modal}`;
+}
+
 function vReport() {
   const f = curF(), st = fStats(f), canClose = st.allPass && !f.closed_at;
   const COLS = 'grid-template-columns:50px 110px 70px minmax(150px,1fr) 80px 90px 80px 150px 100px';
   const t2 = (v, l, fg) => `<div style="border:1px solid #E3DCE8;border-radius:10px;padding:12px 14px"><div style="font-size:26px;font-weight:800;line-height:1.1;color:${fg}">${v}</div><div style="font-size:14px;color:#5E5566">${l}</div></div>`;
-  const sign = (name, role) => `<div style="text-align:center;font-size:15px"><div style="border-bottom:1px dotted #5E5566;height:44px"></div><div style="margin-top:6px">(${esc(name)})</div><div style="color:#5E5566">${role}</div></div>`;
+  const sign = role => `<div style="text-align:center;font-size:15px"><div style="border-bottom:1px dotted #5E5566;height:44px"></div><div style="margin-top:6px">${role}</div></div>`;
   return `<div data-scroll="report" class="scroll">
     <div data-noprint style="max-width:1000px;margin:0 auto;padding:16px 16px 0;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
       <button data-act="print" class="bp" style="padding:0 18px">พิมพ์ / ส่งออก PDF</button>
@@ -1161,7 +1264,7 @@ function vReport() {
           ${f.segments.map((x, i) => { const ds = dOf(f.id, x.seq), sg = SEG[st.st[i]]; return `<div class="row prow" style="${COLS};padding:10px 12px;font-size:14px"><b>${x.seq}</b><span>${esc(dash(x.voltage))}</span><span>${dash(x.plan_trees)}</span><span>${esc(densText(x))}</span><span>${x.length_km.toFixed(2)}</span><span>${ds.length || '–'}</span><span>${ds.length ? Math.max(...ds.map(y => y.round_no)) : (x.passed_at ? 1 : '–')}</span><span><span style="padding:2px 8px;border-radius:999px;background:${sg.bg};color:${sg.fg};font-weight:700;white-space:nowrap">${sg.glyph} ${sg.label}</span></span><span>${segPassAt(f, x)}</span></div>`; }).join('')}
           <div class="prow" style="display:grid;${COLS};gap:8px;padding:10px 12px;border-top:2px solid ${P};font-size:14px;font-weight:800"><span>รวม</span><span></span><span>${st.trees}</span><span></span><span>${st.km.toFixed(2)}</span><span>${st.ds.length}</span><span></span><span>ผ่าน ${st.passN}/${f.segments.length}</span><span></span></div>
         </div></div></div>
-      <div class="psign" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:24px;margin-top:12px">${sign(S.me.full_name, 'ผู้ตรวจรับ กฟภ.')}${sign(f.contractor, 'ผู้รับจ้าง')}</div>
+      <div class="psign" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:24px;margin-top:12px">${sign('ผู้ตรวจรับ')}${sign('ผู้รับจ้าง')}</div>
     </div></div></div>`;
 }
 
@@ -1249,7 +1352,7 @@ const shell = document.getElementById('shell');
 function render() {
   const sc = {}; shell.querySelectorAll('[data-scroll]').forEach(el => { sc[el.dataset.scroll] = el.scrollTop; });
   if (/feeder|report|fdash/.test(S.screen) && !curF()) Object.assign(S, { screen: 'dash', cur: null, sheet: null, draft: null, del: null });
-  const f = curF(), screen = S.screen === 'login' ? vLogin() : S.screen === 'dash' ? vDash() : S.screen === 'import' ? vImport()
+  const f = curF(), screen = S.screen === 'login' ? vLogin() : S.screen === 'dash' ? vDash() : S.screen === 'import' ? vImport() : S.screen === 'admin' ? vAdmin()
     : !f ? '' : S.screen === 'feeder' ? vFeeder() : S.screen === 'report' ? vReport() : S.screen === 'fdash' ? vFDash() : '';
   shell.innerHTML = vHeader() + `<div data-main style="flex:1;min-height:0;position:relative;display:flex;flex-direction:column">${screen}${vSheet()}${vNotif()}${vDelete()}${vToast()}</div>`;
   shell.querySelectorAll('[data-scroll]').forEach(el => { if (sc[el.dataset.scroll]) el.scrollTop = sc[el.dataset.scroll]; });
@@ -1291,6 +1394,41 @@ const ACT = {
     const f = curF();
     run(async () => { await db.deleteFeeder(f); S.del = null; return ['ลบงาน ' + f.code + ' แล้ว', 'ok', () => set({ screen: 'dash', cur: null })]; });
   },
+  // ── จัดการระบบ ──
+  goAdmin() {
+    if (LIVE && !S.online) return showToast('ไม่มีสัญญาณ — การจัดการระบบต้องออนไลน์', 'off');
+    set({ screen: 'admin', adm: { users: [], loading: true, filter: S.me.office, office: { id: '', name: '' }, newRole: null, form: null, modal: null } });
+    admLoad();
+  },
+  admNew: role => set({ adm: { ...S.adm, newRole: role || null, form: role ? { office_id: S.adm.filter || S.me.office, role, username: '', full_name: '', company: '', password: '' } : null } }),
+  admAddOffice() {
+    const id = S.adm.office.id.trim().toLowerCase(), name = S.adm.office.name.trim();
+    if (!/^[a-z0-9]{2,10}$/.test(id)) return showToast('รหัสการไฟฟ้า: a-z 0-9 ยาว 2–10 ตัว ไม่มีช่องว่าง', 'err', 5000);
+    if (!name) return showToast('กรุณากรอกชื่อการไฟฟ้า', 'err');
+    admRun(async () => { await admApi.addOffice(id, name); S.adm.office = { id: '', name: '' }; return 'เพิ่ม ' + name + ' แล้ว'; });
+  },
+  admCreate() {
+    const f = { ...S.adm.form, username: S.adm.form.username.trim().toLowerCase(), full_name: S.adm.form.full_name.trim(), company: S.adm.form.company.trim() };
+    if (!/^[a-z0-9._-]{3,32}$/.test(f.username)) return showToast('ชื่อผู้ใช้ใช้ได้เฉพาะ a-z 0-9 . _ - ยาว 3–32 ตัว', 'err', 5000);
+    if (f.role === 'contractor' && !f.company) return showToast('กรุณากรอกชื่อบริษัท/หจก.', 'err');
+    if (f.password.length < 6) return showToast('รหัสผ่านอย่างน้อย 6 ตัว', 'err');
+    admRun(async () => { await admApi.create(f); Object.assign(S.adm, { newRole: null, form: null, filter: f.office_id });   // แสดงรายชื่อของการไฟฟ้าที่เพิ่ง
+      return 'เพิ่ม' + ROLE_TH[f.role] + ' ' + f.username + ' แล้ว · เข้าสู่ระบบโดยเลือก ' + officeName(f.office_id); });
+  },
+  admPw: id => { const u = S.adm.users.find(x => x.id === id); set({ adm: { ...S.adm, modal: { id, username: u.username, pw: '' } } }); },
+  admPwCancel: () => set({ adm: { ...S.adm, modal: null } }),
+  admPwSave() {
+    const m = S.adm.modal; if (m.pw.length < 6) return showToast('รหัสผ่านอย่างน้อย 6 ตัว', 'err');
+    admRun(async () => { await admApi.setPassword(m.id, m.pw); S.adm.modal = null; return 'ตั้งรหัสผ่านใหม่ของ ' + m.username + ' แล้ว'; });
+  },
+  admToggle(id) {
+    const u = S.adm.users.find(x => x.id === id);
+    admRun(async () => { await admApi.setActive(id, !u.active); return (u.active ? 'ปิดบัญชี ' : 'เปิดบัญชี ') + u.username + ' แล้ว'; });
+  },
+  admDel(id) {
+    const u = S.adm.users.find(x => x.id === id);
+    admRun(async () => { const r = await admApi.remove(id); return r.deleted ? 'ลบ ' + u.username + ' แล้ว' : u.username + ' มีประวัติในระบบ — ปิดบัญชีแทนการลบ'; });
+  },
   closeSheet, saveSheet: () => ({ defect: saveDefect, fix: saveFix, reject: saveReject })[S.sheet](),
   draftSeg: seq => set({ draft: { ...S.draft, seq: +seq, manual: true } }),
   draftType: i => set({ draft: { ...S.draft, type: TYPES[+i] }, err: null }),
@@ -1307,7 +1445,7 @@ const FILE = {
 };
 shell.addEventListener('click', e => { const el = e.target.closest('[data-act]'); if (!el || el.disabled) return; ACT[el.dataset.act](el.dataset.arg); });
 // พิมพ์ = เก็บค่าเงียบๆ (ไม่ render → focus ไม่หลุด); data-rr = render ตอน change
-const setPath = (path, v) => { const k = path.split('.'); if (k.length === 1) S[k[0]] = v; else S[k[0]] = { ...S[k[0]], [k[1]]: v }; };
+const setPath = (path, v) => { const k = path.split('.'), last = k.pop(); let o = S; for (const p of k) o = o[p]; o[last] = v; };
 shell.addEventListener('input', e => { const p = e.target.dataset.in; if (p) setPath(p, e.target.value); });
 shell.addEventListener('change', e => {
   const t = e.target; if (t.dataset.file) return FILE[t.dataset.file](e);
