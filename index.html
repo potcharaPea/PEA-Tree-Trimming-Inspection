@@ -473,6 +473,12 @@ async function login() {
   set({ busy: true, loginErr: null });
   let u; try { u = await db.signIn(S.office, S.loginId, S.password); } catch (e) { return set({ busy: false, loginErr: e.message }); }
   if (!u) return set({ busy: false, loginErr: LIVE ? 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง' : 'ไม่พบชื่อผู้ใช้นี้ใน ' + officeName(S.office) });
+  // บทบาทที่เลือกต้องตรงกับบัญชี (กันสับสน: เลือก "ผู้รับจ้าง" แต่ใช้บัญชีผู้ตรวจ)
+  if (u.role !== S.role) {
+    await db.signOut();
+    const th = r => r === 'inspector' ? 'ผู้ตรวจ' : 'ผู้รับจ้าง';
+    return set({ busy: false, loginErr: 'บัญชีนี้เป็น' + th(u.role) + ' — กรุณาเลือกบทบาท "' + th(u.role) + '" แล้วเข้าสู่ระบบใหม่' });
+  }
   enter(u);
 }
 async function enter(u) {
