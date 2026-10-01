@@ -123,7 +123,7 @@ create or replace function is_inspector() returns boolean
 language sql stable security definer set search_path = public as $$ select exists (select 1 from profiles where id = auth.uid() and role = 'inspector') $$;
 -- เห็น feeder: ผู้ตรวจ = ทุก feeder ในการไฟฟ้าตน, ผู้รับจ้าง = เฉพาะที่ผูกไว้
 create or replace function is_sysadmin() returns boolean
-language sql stable security definer set search_path = public as $ select coalesce((select is_admin from profiles where id = auth.uid()), false) $;
+language sql stable security definer set search_path = public as $$ select coalesce((select is_admin from profiles where id = auth.uid()), false) $$;
 create or replace function can_see_feeder(f uuid) returns boolean
 language sql stable security definer set search_path = public as $$
   select exists (select 1 from feeders x where x.id = f and x.office_id = my_office()
