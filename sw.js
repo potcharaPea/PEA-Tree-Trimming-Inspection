@@ -1,7 +1,8 @@
 // Service Worker — เปิดแอปได้ตอนไม่มีเน็ต
 // แก้ index.html แล้วอยากให้เครื่องผู้ใช้ได้ไฟล์ใหม่ทันที → เปลี่ยนเลขเวอร์ชันนี้
-const CACHE = 'tree-v1';
-const APP = ['./', './index.html',
+const CACHE = 'tree-v2';
+const APP = ['./', './index.html', './manifest.webmanifest',
+  './icons/icon-192.png', './icons/icon-512.png', './icons/icon-maskable-512.png', './icons/apple-touch-icon.png',
   'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css',
   'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js',
   'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js',
