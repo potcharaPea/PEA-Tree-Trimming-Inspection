@@ -1,0 +1,1279 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ระบบตรวจรับงานตัดต้นไม้ กฟภ.</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600;700&family=Sarabun:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js"></script>
+<style>
+html,body{margin:0;padding:0;background:#F6F3F8}
+*{box-sizing:border-box}
+button,input,textarea,select{font-family:inherit}
+button{cursor:pointer}
+button:disabled{cursor:not-allowed}
+a{color:#5B1A7A}
+#shell{position:relative;width:100%;height:100vh;height:100dvh;overflow:hidden;background:#F6F3F8;display:flex;flex-direction:column;font-family:'Sarabun',sans-serif;color:#1C1324;font-size:16px;line-height:1.45}
+.leaflet-container{font-family:'Sarabun',sans-serif}
+.leaflet-div-icon{background:transparent;border:0}
+.mono{font-family:'IBM Plex Mono',monospace}
+.scroll{flex:1;overflow:auto}
+.card{background:#fff;border:1px solid #E3DCE8;border-radius:14px;padding:16px;display:flex;flex-direction:column;gap:12px}
+.tile{background:#fff;border:1px solid #E3DCE8;border-radius:12px;padding:12px 14px}
+.tile b{display:block;font-size:26px;font-weight:800;line-height:1.1}
+.tile span{font-size:14px;color:#5E5566}
+.fact{background:#F6F3F8;border-radius:10px;padding:8px 12px;min-width:0}
+.fact div:first-child{font-size:13px;color:#5E5566}
+.fact div:last-child{font-size:15px;font-weight:700;overflow-wrap:anywhere}
+.facts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.pill{padding:4px 10px;border-radius:999px;font-size:13px;font-weight:700;white-space:nowrap}
+.bp{height:48px;border:0;border-radius:12px;background:#5B1A7A;color:#fff;font-size:16px;font-weight:700}
+.bo{height:48px;border:1.5px solid #5B1A7A;border-radius:12px;background:#fff;color:#5B1A7A;font-size:16px;font-weight:700}
+.bnav{height:48px;border:1.5px solid #1565C0;border-radius:12px;background:#fff;color:#0D47A1;font-size:16px;font-weight:700}
+.lbl{display:flex;flex-direction:column;gap:6px}
+.lbl>span{font-size:15px;font-weight:600;color:#4A3F52}
+.inp{height:52px;border:1.5px solid #C9BED1;border-radius:10px;padding:0 14px;font-size:17px;color:#1C1324;background:#fff;width:100%}
+.ta{border:1.5px solid #C9BED1;border-radius:10px;padding:10px 12px;font-size:16px;resize:vertical;color:#1C1324}
+.h15{font-size:15px;font-weight:800}
+.sub{font-weight:500;color:#5E5566}
+.ph{position:relative;aspect-ratio:1;border-radius:10px;overflow:hidden;background:repeating-linear-gradient(135deg,#E6DFEA 0 8px,#EFEAF2 8px 16px)}
+.ph.g{background:repeating-linear-gradient(135deg,#DDEBDD 0 8px,#E9F2E9 8px 16px)}
+.ph i{position:absolute;inset:0;background-size:cover;background-position:center}
+.ph span{position:absolute;left:4px;bottom:4px;right:4px;font-size:11px;font-weight:600;background:rgba(255,255,255,.94);padding:1px 5px;border-radius:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cam{aspect-ratio:1;border-radius:10px;border:2px dashed #5B1A7A;background:#F7F0FA;color:#5B1A7A;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;cursor:pointer;font-size:14px;font-weight:700}
+.grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.link{border:0;background:none;color:#5B1A7A;font-size:13px;font-weight:700;text-decoration:underline;padding:0}
+.seg2{display:flex;gap:4px;background:#EFEAF2;border-radius:12px;padding:4px}
+.seg2 button{flex:1;height:44px;border:0;border-radius:9px;font-size:15px;font-weight:700}
+.row{display:grid;gap:8px;padding:10px 14px;border-top:1px solid #ECE6EF;font-size:15px;align-items:center}
+.ico{flex:none;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800}
+@media print{[data-noprint]{display:none !important}#shell,[data-main],[data-scroll]{height:auto !important;overflow:visible !important;box-shadow:none !important;border-radius:0 !important;position:static !important}body{background:#fff}}
+/* รายงาน: A4 แนวตั้ง ตารางพอดีหน้า สีป้ายพิมพ์ออก แถว/ลายเซ็นไม่ขาดกลางหน้า */
+@page{size:A4 portrait;margin:12mm}
+@media print{
+  html,body,#shell{background:#fff !important}
+  *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  [data-rwrap]{max-width:none !important;margin:0 !important;padding:0 !important}
+  [data-rcard]{border:0 !important;padding:0 !important;gap:14px !important}
+  [data-ptable]{overflow:visible !important}
+  [data-ptable]>div{min-width:0 !important}
+  .prow{grid-template-columns:26px 70px 34px minmax(0,1fr) 40px 52px 44px 98px 60px !important;gap:4px !important;padding:5px 6px !important;font-size:10.5px !important;break-inside:avoid}
+  .prow span span{white-space:normal !important;padding:1px 5px !important}
+  .psign{break-inside:avoid}
+  [data-rmeta]{grid-template-columns:repeat(4,1fr) !important}
+  [data-rtiles]{grid-template-columns:repeat(6,1fr) !important;gap:6px !important}
+  [data-rtiles]>div{padding:8px 10px !important}
+  [data-rtiles]>div>div:first-child{font-size:20px !important}
+  [data-rtiles]>div>div:last-child{font-size:11.5px !important}
+}
+</style>
+</head>
+<body>
+<div id="shell"></div>
+<script>
+'use strict';
+// ════════════════════════════════════════════════════════════════
+// CONFIG
+// ════════════════════════════════════════════════════════════════
+// Supabase — ใช้เฉพาะ publishable/anon key (ห้ามใส่ service_role) · เว้นว่าง = โหมดสาธิต (mock ใน memory)
+const SUPABASE_URL = 'https://nwowvwadxdsidazolljk.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_2wpHTWLsPuswlj_mSnmfFQ_FZ89xplf';
+const LIVE = !!(SUPABASE_URL && SUPABASE_KEY) && !/[?&]demo\b/.test(location.search);   // ?demo = บังคับโหมดสาธิต
+// retry: false + timeout → สัญญาณหลอก (มีขีดแต่ใช้ไม่ได้) จะตกไปคิวออฟไลน์เร็ว แทนที่จะค้างรอ retry
+const sb = LIVE ? supabase.createClient(SUPABASE_URL, SUPABASE_KEY, { db: { retry: false },
+  global: { fetch: (u, o = {}) => fetch(u, { ...o, signal: o.signal || AbortSignal.timeout(20000) }) } }) : null;
+const emailOf = (office, username) => username.trim().toLowerCase() + '@' + office + '.local';
+const P = '#5B1A7A';
+const WIDE_PX = 900;            // ≥ นี้ = เดสก์ท็อป (แผนที่ซ้าย รายการขวา)
+const FAR_M = 50;               // หมุดห่างแนวสายเกินนี้ = เตือน
+const M = ['ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'];
+const TYPES = ['ระยะห่างไม่ถึงเกณฑ์','กิ่งค้างบนสาย','ไม่เก็บกิ่ง','ตัดไม่ครบ','อื่นๆ'];
+// สถานะจุดบกพร่อง (ค่าตาม DB schema)
+const DEF = {
+  open:     { label:'รอแก้ไข',         solid:'#C62828', bg:'#FDE7E7', fg:'#8E1B1B', glyph:'!', shape:'50%' },
+  submitted:{ label:'รอตรวจ',          solid:'#E87500', bg:'#FFEFD6', fg:'#7A3B00', glyph:'⧗', shape:'6px' },
+  passed:   { label:'ผ่าน',            solid:'#2E7D32', bg:'#E3F2E4', fg:'#1B5E20', glyph:'✓', shape:'50%' },
+  rejected: { label:'ไม่ผ่าน ส่งกลับ',  solid:'#7F1D1D', bg:'#F6D5D5', fg:'#6B1414', glyph:'✕', shape:'2px' }
+};
+const SEG = {
+  none:  { label:'ยังไม่ตรวจ',        solid:'#6B6472', bg:'#EEEAF0', fg:'#3F3846', glyph:'–' },
+  defect:{ label:'มีจุดบกพร่องค้าง',  solid:'#C62828', bg:'#FDE7E7', fg:'#8E1B1B', glyph:'!' },
+  pass:  { label:'ผ่าน',             solid:'#2E7D32', bg:'#E3F2E4', fg:'#1B5E20', glyph:'✓' }
+};
+const FEED = {
+  active: { label:'กำลังตรวจ',          bg:'#F1E7F6', fg:'#4A1564', glyph:'●' },
+  waiting:{ label:'รอผู้รับจ้างแก้ไข',   bg:'#FFEFD6', fg:'#7A3B00', glyph:'⧗' },
+  closed: { label:'ปิดงานแล้ว',         bg:'#E3F2E4', fg:'#1B5E20', glyph:'✓' }
+};
+// defect_events.kind → [สี, glyph, shape, หัวข้อ timeline(round), หัวข้อสั้น]
+const EV = {
+  created:      ['#C62828','!','50%', r => 'ตรวจครั้งที่ ' + r + ' · พบจุดบกพร่อง', 'พบจุดบกพร่อง'],
+  fix_submitted:['#E87500','⧗','6px', () => 'ผู้รับจ้างส่งหลักฐานการแก้ไข', 'ผู้รับจ้างส่งหลักฐานแก้ไข'],
+  passed:       ['#2E7D32','✓','50%', r => 'ตรวจครั้งที่ ' + r + ' · ผ่าน', 'ตรวจผ่าน'],
+  rejected:     ['#7F1D1D','✕','2px', r => 'ตรวจครั้งที่ ' + r + ' · ไม่ผ่าน ส่งกลับแก้ใหม่', 'ไม่ผ่าน ส่งกลับ']
+};
+const TILES = {
+  osm: ['https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', '© OpenStreetMap'],
+  sat: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', 'Esri']
+};
+const TOAST_BG = { ok:'#1B5E20', off:'#2B2230', rt:'#B85C00', err:'#B3261E' };
+
+// ════════════════════════════════════════════════════════════════
+// DATA LAYER — 2 โหมด: LIVE = Supabase, ไม่ LIVE = mock ใน memory (สาธิต/พัฒนา)
+//   ทุก action เรียก db.* แล้ว (LIVE) โหลดข้อมูลใหม่ทั้งชุด — ponytail: ข้อมูล กฟส. หนึ่งไม่กี่พันแถว, เปลี่ยนเป็นโหลดเฉพาะส่วนถ้าช้า
+// ════════════════════════════════════════════════════════════════
+const MOCK_OFFICES = [ { id:'kce', name:'กฟส.คำชะอี' }, { id:'ktw', name:'กฟส.กันทรวิชัย' } ];
+const MOCK_USERS = [
+  { id:'somchai.j', username:'somchai.j', office:'kce', role:'inspector',  full_name:'สมชาย ใจดี' },
+  { id:'romyen.co', username:'romyen.co', office:'kce', role:'contractor', full_name:'ผู้ประสานงาน ร่มเย็น', company:'หจก. ร่มเย็นการโยธา' },
+  { id:'thaipruek', username:'thaipruek', office:'kce', role:'contractor', full_name:'ผู้ประสานงาน ไทยพฤกษ์', company:'บริษัท ไทยพฤกษ์ เซอร์วิส จำกัด' },
+  { id:'wichai.k',  username:'wichai.k',  office:'ktw', role:'inspector',  full_name:'วิชัย กล้าหาญ' },
+  { id:'srisuk.co', username:'srisuk.co', office:'ktw', role:'contractor', full_name:'ผู้ประสานงาน ศรีสุข', company:'หจก. ศรีสุขการไฟฟ้า' }
+];
+const officeName = id => (S.offices.find(o => o.id === id) || {}).name || '';
+const contractorsOf = office => S.profiles.filter(u => u.office === office && u.role === 'contractor');
+const whoOf = id => { const u = S.profiles.find(p => p.id === id); return !u ? '' : u.role === 'inspector' ? u.full_name + ' (ผู้ตรวจ)' : u.company || u.full_name; };
+const pad4 = n => 'D-' + String(n).padStart(4, '0');
+const uuid = () => crypto.randomUUID();
+const fail = (e, ctx) => { console.error(ctx, e); throw new Error((e && e.message) || String(e)); };
+const q = async (p, ctx) => { const { data, error } = await p; if (error) fail(error, ctx); return data; };
+
+const db = {
+  // ── เริ่มต้น: รายชื่อการไฟฟ้า + กู้ session เดิม ──
+  // ไม่มีเน็ต → ใช้สำเนาล่าสุดใน IndexedDB (session ของ supabase อยู่ในเครื่องอยู่แล้ว)
+  async init() {
+    if (!LIVE) return null;
+    const sp = await snap.get(), { data } = await sb.auth.getSession(), uid = data.session && data.session.user.id;
+    try { S.offices = await q(sb.from('offices').select('*').order('name'), 'offices'); }
+    catch (e) { if (!isNetErr(e) || !sp) throw e; S.offices = sp.offices; }
+    if (!uid) return null;
+    try { return await db.profile(uid); } catch (e) { if (isNetErr(e) && sp && sp.user === uid) return sp.me; throw e; }
+  },
+  async profile(id) {
+    const p = await q(sb.from('profiles').select('*').eq('id', id).maybeSingle(), 'profile');
+    return p && { ...p, office: p.office_id };
+  },
+  async signIn(office, username, password) {
+    if (!LIVE) return MOCK_USERS.find(x => x.office === office && x.username === username.trim()) || null;
+    const { data, error } = await sb.auth.signInWithPassword({ email: emailOf(office, username), password });
+    if (error) return null;
+    const p = await db.profile(data.user.id);
+    if (!p) { await sb.auth.signOut(); throw new Error('บัญชีนี้ยังไม่ได้ผูกโปรไฟล์ — ติดต่อผู้ดูแลระบบ'); }
+    return p;
+  },
+  signOut: () => LIVE ? sb.auth.signOut() : null,
+  // ── โหลดทุกอย่างที่ผู้ใช้เห็นได้ (RLS กรองให้แล้ว) ──
+  async load() {
+    if (!LIVE) return;
+    // ออฟไลน์ → ใช้สำเนาล่าสุดทันที (ไม่ยิง fetch ให้ supabase-js retry ค้างหลายวินาที)
+    let ok = false;
+    if (S.online) { try { await db.fetchAll(); snap.save(); ok = true; } catch (e) { if (!isNetErr(e)) throw e; } }
+    if (!ok) { const sp = await snap.get(); if (sp && sp.user === S.me.id) Object.assign(S, { profiles: sp.profiles, feeders: sp.feeders, defects: sp.defects }); }
+    // รายการที่ยังรอส่ง → ทับบนข้อมูลล่าสุดให้เห็นบนจอ
+    const ops = await queue.mine().catch(() => []);
+    ops.forEach(op => local[op.type](op.p, true));
+    S.queue = ops.length;
+  },
+  async fetchAll() {
+    const [pr, fe, fc, sg, df, ev] = await Promise.all([
+      q(sb.from('profiles').select('id,office_id,username,full_name,role,company'), 'profiles'),
+      q(sb.from('feeders').select('*').order('code'), 'feeders'),
+      q(sb.from('feeder_contractors').select('*'), 'feeder_contractors'),
+      q(sb.from('segments').select('*').order('seq'), 'segments'),
+      q(sb.from('defects').select('*').order('code_no'), 'defects'),
+      q(sb.from('defect_events').select('*').order('created_at'), 'defect_events')]);
+    S.profiles = pr.map(p => ({ ...p, office: p.office_id }));
+    const paths = ev.flatMap(e => (e.photos || []).map(p => p.path)).filter(Boolean);
+    const urls = {};
+    if (paths.length) (await q(sb.storage.from('photos').createSignedUrls(paths, 12 * 3600), 'signedUrls')).forEach(u => { if (u.signedUrl) urls[u.path] = u.signedUrl; });
+    const segById = {};
+    S.feeders = fe.map(f => {
+      const cid = (fc.find(x => x.feeder_id === f.id) || {}).contractor_id, con = S.profiles.find(p => p.id === cid);
+      const segments = sg.filter(s => s.feeder_id === f.id).map(s => (segById[s.id] = { ...s, length_km: +s.length_km, coords: s.geom_geojson.coordinates.map(c => [c[1], c[0]]), pending: false }));
+      return { id: f.id, code: f.code, line: f.line_name, office: f.office_id, contractor_id: cid || null, contractor: con ? con.company || con.full_name : '–', closed_at: f.closed_at, imported_at: f.created_at, segments };
+    });
+    S.defects = df.map(d => ({ id: d.id, code: pad4(d.code_no), feeder_id: d.feeder_id, segment_id: d.segment_id, seq: (segById[d.segment_id] || {}).seq, lat: d.lat, lng: d.lng,
+      issue_type: d.issue_type, status: d.status, round_no: d.round_no,
+      events: ev.filter(e => e.defect_id === d.id).map(e => ({ id: e.id, kind: e.kind, round_no: e.round_no, at: e.created_at, note: e.note || '', pending: false, who: whoOf(e.actor_id), actor_id: e.actor_id,
+        photos: (e.photos || []).map(p => ({ label: p.label, path: p.path, url: urls[p.path] || null })) })) }));
+  },
+  // อัปโหลดรูปของ event → [{path,label}] (รูปถูกย่อแล้วตอนเลือก) · upsert = ส่งซ้ำตอน sync ได้
+  async upload(feederCode, defectId, eventId, photos) {
+    const out = [];
+    for (const [i, ph] of (photos || []).filter(p => p.file).entries()) {
+      const path = feederCode + '/' + defectId + '/' + eventId + '_' + (i + 1) + '.jpg';
+      await q(sb.storage.from('photos').upload(path, ph.file, { contentType: 'image/jpeg', upsert: true }), 'upload');
+      out.push({ path, label: ph.label });
+    }
+    return out;
+  },
+  // ── เขียนข้อมูล: db.do(ชนิด, payload) ──
+  //   ออนไลน์ → srv (Supabase) · ออฟไลน์/เน็ตหลุดกลางทาง → เข้าคิว IndexedDB + แสดงบนจอทันที (local, ป้าย "รอส่ง")
+  //   payload มี id/เวลาที่สร้างจากเครื่อง → ส่งซ้ำตอน sync ได้โดยไม่เกิดรายการซ้ำ
+  async do(type, p) {
+    p = { ...p, at: p.at || nowIso() };
+    if (!LIVE) { const pending = !S.online; if (pending) S.queue++; return { code: local[type](p, pending), pending }; }
+    if (S.online) { try { return { code: await srv[type](p), pending: false }; } catch (e) { if (!isNetErr(e)) throw e; } }
+    await queue.add(type, p);
+    return { code: local[type](p, true), pending: true };
+  },
+  // ── นำเข้า: ex = feeder เดิม (หรือ null), mode append|replace, segs = ช่วงที่จะเพิ่ม → คืน feeder id ──
+  async importFeeder(ex, code, line, contractorId, mode, segs) {
+    const con = S.profiles.find(p => p.id === contractorId), conName = con ? con.company || con.full_name : '–';
+    if (!LIVE) {
+      if (ex && mode === 'append') S.feeders = S.feeders.map(f => f.id === ex.id ? { ...f, line, contractor_id: contractorId, contractor: conName, closed_at: null, segments: [...f.segments, ...segs].sort((a, b) => a.seq - b.seq) } : f);
+      else if (ex) { S.feeders = S.feeders.map(f => f.id === ex.id ? { ...f, line, contractor_id: contractorId, contractor: conName, closed_at: null, segments: segs } : f); S.defects = S.defects.filter(d => d.feeder_id !== ex.id); }
+      else S.feeders = [...S.feeders, { id: code, code, line, office: S.me.office, contractor_id: contractorId, contractor: conName, closed_at: null, imported_at: nowIso(), segments: segs }];
+      return ex ? ex.id : code;
+    }
+    let fid;
+    if (ex) {
+      fid = ex.id;
+      await q(sb.from('feeders').update({ line_name: line, closed_at: null }).eq('id', fid), 'feeder');
+      // ponytail: แทนที่ทั้งหมด → ลบช่วง (defects/events ลบตาม cascade) แต่รูปใน Storage ค้างไว้; ล้างเองถ้าพื้นที่ใกล้เต็ม
+      if (mode === 'replace') { await q(sb.from('segments').delete().eq('feeder_id', fid), 'delSegs'); await q(sb.from('inspection_rounds').delete().eq('feeder_id', fid), 'delRounds'); }
+      await q(sb.from('feeder_contractors').delete().eq('feeder_id', fid), 'delFc');
+    } else fid = (await q(sb.from('feeders').insert({ office_id: S.me.office, code, line_name: line }).select('id').single(), 'feeder')).id;
+    if (contractorId) await q(sb.from('feeder_contractors').insert({ feeder_id: fid, contractor_id: contractorId }), 'fc');
+    if (segs.length) await q(sb.from('segments').insert(segs.map(s => ({ feeder_id: fid, seq: s.seq, source_file: s.source_file, voltage: s.voltage, plan_trees: s.plan_trees,
+      density_label: s.density_label, density_range: s.density_range, price_trees: s.price_trees, length_km: +s.length_km.toFixed(4),
+      geom_geojson: { type: 'LineString', coordinates: s.coords.map(c => [c[1], c[0]]) }, raw_description: s.raw_description }))), 'segments');
+    return fid;
+  },
+  // ── realtime: มีอะไรเปลี่ยน → โหลดใหม่ (หน่วง 400ms รวมหลายแถว), event ใหม่ส่งให้ onEvent ──
+  subscribe(onEvent) {
+    if (!LIVE) return;
+    let t; const reload = () => { clearTimeout(t); t = setTimeout(refresh, 400); };
+    db.channel = sb.channel('office-' + S.me.office)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'feeders' }, reload)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'segments' }, reload)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'defects' }, reload)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'defect_events' }, p => { onEvent(p.new); reload(); })
+      .subscribe();
+  },
+  unsubscribe() { if (db.channel) { sb.removeChannel(db.channel); db.channel = null; } }
+};
+
+function rng(s) { return () => { s = (s * 16807) % 2147483647; return (s - 1) / 2147483646; }; }
+function genLine(start, hd, n, rnd) {
+  let [lat, lng] = start, h = hd; const out = [];
+  for (let i = 0; i < n; i++) { const pts = [[lat, lng]]; for (let j = 0; j < 7; j++) { h += (rnd()-0.5)*0.5; const km = 0.135 + rnd()*0.04; lat += km/111*Math.cos(h); lng += km/(111*Math.cos(lat*Math.PI/180))*Math.sin(h); pts.push([lat, lng]); } out.push(pts); }
+  return out;
+}
+function density(k) { return k <= 40 ? ['เบาบาง','10-40 ต้น/กม.'] : k <= 80 ? ['ปานกลาง','41-80 ต้น/กม.'] : ['หนาแน่น','81-120 ต้น/กม.']; }
+function mkSeg(seq, pts, rnd) {
+  const len = lenKm(pts), per = 12 + Math.floor(rnd()*95), trees = Math.max(3, Math.round(per*len)), [dl, dr] = density(trees/len);
+  return { seq, voltage:'MV (22-33 kV.)', plan_trees:trees, density_label:dl, density_range:dr, price_trees: rnd() < 0.35 ? null : Math.max(1, trees - Math.floor(rnd()*6)),
+    coords:pts, length_km:len, source_file: seq + '.kmz', raw_description:'', passed_at:null, pending:false };
+}
+function seed() {
+  const mk = (code, line, office, cid, start, hd, n, sd) => { const rnd = rng(sd); return { id:code, code, line, office, contractor_id:cid, contractor:MOCK_USERS.find(u => u.id === cid).company, closed_at:null, imported_at:'2026-09-22T10:00', segments: genLine(start, hd, n, rnd).map((p, i) => mkSeg(i+1, p, rnd)) }; };
+  const A = mk('MDA03R-04','ไลน์เหล่าสร้างถ่อ','kce','romyen.co',[16.5420,104.6280],1.2,8,11);
+  const B = mk('MDA03R-07','ไลน์คำป่าหลาย','kce','romyen.co',[16.6000,104.6750],0.4,5,23);
+  const Cc = mk('MDA01R-02','ไลน์บ้านบางทรายใหญ่','kce','thaipruek',[16.4650,104.6900],2.1,4,37);
+  const D = mk('MDA02R-05','ไลน์ดงหลวง','kce','thaipruek',[16.5100,104.5600],0.9,6,41);
+  const E = mk('MDA07R-01','ไลน์ศรีสุข','ktw','srisuk.co',[16.3200,104.4500],0.6,5,53);
+  A.segments[0].passed_at = A.segments[1].passed_at = '2026-09-23T17:00';
+  B.segments[0].passed_at = '2026-09-24T17:00';
+  Cc.segments.forEach(s => { s.passed_at = '2026-09-18T17:00'; }); Cc.closed_at = '2026-09-19T10:00';
+  const ph = (n, b) => Array.from({ length: n }, (_, i) => ({ label: 'IMG_' + (b+i) + '.jpg', url: null }));
+  const H = (kind, round_no, at, note, photos) => ({ kind, round_no, at, note, photos: photos || [], pending:false });
+  const Df = (code, f, seq, t, type, status, round_no, events) => { const p = along(f.segments[seq-1].coords, t);
+    return { id:code, code, feeder_id:f.id, seq, lat:p[0]+0.00006, lng:p[1]-0.00004, issue_type:type, status, round_no,
+      events: events.map(h => ({ ...h, who: h.kind === 'fix_submitted' ? f.contractor : 'สมชาย ใจดี (ผู้ตรวจ)' })) }; };
+  const defects = [
+    Df('D-0412',A,3,.3,'กิ่งค้างบนสาย','open',1,[H('created',1,'2026-09-23T09:15','กิ่งยูคาลิปตัสค้างบนสายเฟส B ยาวประมาณ 2 ม.',ph(2,2301))]),
+    Df('D-0413',A,3,.72,'ระยะห่างไม่ถึงเกณฑ์','submitted',1,[H('created',1,'2026-09-23T09:40','กิ่งมะม่วงห่างสาย 22 kV ไม่ถึง 3 ม.',ph(2,2306)),H('fix_submitted',1,'2026-09-26T14:05','ตัดเพิ่มให้ห่างสายประมาณ 3.5 ม.',ph(2,5120))]),
+    Df('D-0415',A,4,.5,'ไม่เก็บกิ่ง','rejected',2,[H('created',1,'2026-09-23T10:20','กองกิ่งไม้ริมถนนใต้แนวสาย 3 กอง',ph(1,2312)),H('fix_submitted',1,'2026-09-25T16:30','เก็บกิ่งขึ้นรถแล้ว',ph(1,5101)),H('rejected',2,'2026-09-27T11:10','ยังเหลือกองกิ่งริมถนน 2 กอง ฝั่งทิศใต้',ph(1,2410))]),
+    Df('D-0409',A,5,.6,'กิ่งค้างบนสาย','passed',2,[H('created',1,'2026-09-23T11:02','กิ่งไผ่พาดสาย',ph(2,2318)),H('fix_submitted',1,'2026-09-25T09:45','ตัดกอไผ่ออกทั้งหมด',ph(1,5095)),H('passed',2,'2026-09-27T11:40','',[])]),
+    Df('D-0418',A,6,.35,'ตัดไม่ครบ','submitted',2,[H('created',1,'2026-09-24T08:50','ตัดต้นไม้ในแนวสายไม่ครบ 4 ต้น',ph(2,2350)),H('fix_submitted',1,'2026-09-26T10:15','ตัดครบแล้ว',ph(1,5130)),H('rejected',2,'2026-09-27T13:20','ยังเหลือ 1 ต้นใกล้เสา 6/12',ph(1,2420)),H('fix_submitted',2,'2026-09-29T15:40','ตัดต้นที่เหลือเรียบร้อย',ph(2,5160))]),
+    Df('D-0420',A,6,.8,'อื่นๆ','open',1,[H('created',1,'2026-09-24T09:30','ตอไม้สูงกีดขวางทางเข้าเสา',ph(1,2356))]),
+    Df('D-0431',B,2,.5,'ระยะห่างไม่ถึงเกณฑ์','open',1,[H('created',1,'2026-09-25T10:10','กิ่งยางนาเข้าใกล้สายด้านทิศเหนือ',ph(2,2501))]),
+    Df('D-0388',Cc,2,.4,'ไม่เก็บกิ่ง','passed',2,[H('created',1,'2026-09-15T13:00','',ph(1,1980)),H('fix_submitted',1,'2026-09-16T17:10','',ph(1,4870)),H('passed',2,'2026-09-18T09:20','',[])])
+  ];
+  const u = along(A.segments[2].coords, .42);
+  return { feeders:[A,B,Cc,D,E], defects, user:{ lat:u[0]+0.0004, lng:u[1]+0.0002 } };
+}
+
+// ── เขียนลง Supabase (ทุกตัวส่งซ้ำได้: id มาจากเครื่อง, ซ้ำ = 23505 → ข้าม) ──
+const isNetErr = e => !navigator.onLine || /failed to fetch|networkerror|load failed|network request failed|timed? ?out|abort/i.test(((e && e.message) || '') + ' ' + ((e && e.name) || ''));
+const qIns = async (p, ctx) => { const { error } = await p; if (error && error.code !== '23505') fail(error, ctx); };
+const srv = {
+  async createDefect(p) {
+    const round = await q(sb.from('inspection_rounds').upsert({ feeder_id: p.feederId, round_no: p.round }, { onConflict: 'feeder_id,round_no', ignoreDuplicates: true }).select('id'), 'round');
+    const roundId = round[0] ? round[0].id : (await q(sb.from('inspection_rounds').select('id').eq('feeder_id', p.feederId).eq('round_no', p.round).single(), 'round2')).id;
+    await qIns(sb.from('defects').insert({ id: p.id, segment_id: p.segId, feeder_id: p.feederId, round_id: roundId, round_no: p.round, lat: p.lat, lng: p.lng, issue_type: p.type, note: p.note, created_at: p.at }), 'defect');
+    const photos = await db.upload(p.feederCode, p.id, p.evId, p.photos);
+    await qIns(sb.from('defect_events').insert({ id: p.evId, defect_id: p.id, kind: 'created', round_no: p.round, note: p.note, photos, created_at: p.at }), 'event');
+    return pad4((await q(sb.from('defects').select('code_no').eq('id', p.id).single(), 'code')).code_no);
+  },
+  async addEvent(p) {
+    const photos = await db.upload(p.feederCode, p.defectId, p.evId, p.photos);
+    await qIns(sb.from('defect_events').insert({ id: p.evId, defect_id: p.defectId, kind: p.kind, round_no: p.round_no, note: p.note, photos, created_at: p.at }), 'event');
+  },
+  passSegment: async p => { await q(sb.from('segments').update({ passed_at: p.at, passed_by: S.me.id }).eq('id', p.segId), 'passSeg'); },
+  closeFeeder: async p => { await q(sb.from('feeders').update({ closed_at: p.at }).eq('id', p.feederId), 'closeFeeder'); }
+};
+// ── แก้ state ในเครื่อง (โหมดสาธิต และรายการที่ยังรอส่ง) ──
+const viewPhotos = ps => (ps || []).map(ph => ({ label: ph.label, file: ph.file, url: ph.url || (ph.file ? URL.createObjectURL(ph.file) : null) }));
+const local = {
+  createDefect(p, pending) {
+    const code = LIVE ? 'D-····' : 'D-0' + (++S.seq);
+    S.defects = [...S.defects, { id: p.id, code, feeder_id: p.feederId, segment_id: p.segId, seq: p.seq, lat: p.lat, lng: p.lng, issue_type: p.type, status: 'open', round_no: p.round,
+      events: [{ kind: 'created', round_no: p.round, at: p.at, note: p.note, photos: viewPhotos(p.photos), pending, who: myName() }] }];
+    return code;
+  },
+  addEvent(p, pending) {
+    S.defects = S.defects.map(x => x.id !== p.defectId ? x : { ...x, status: p.kind === 'fix_submitted' ? 'submitted' : p.kind, round_no: p.kind === 'fix_submitted' ? x.round_no : p.round_no,
+      events: [...x.events, { kind: p.kind, round_no: p.round_no, at: p.at, note: p.note, photos: viewPhotos(p.photos), pending, who: myName() }] });
+  },
+  passSegment(p, pending) { S.feeders = S.feeders.map(f => f.id !== p.feederId ? f : { ...f, segments: f.segments.map(s => s.seq === p.seq ? { ...s, passed_at: p.at, pending } : s) }); },
+  closeFeeder(p) { S.feeders = S.feeders.map(f => f.id === p.feederId ? { ...f, closed_at: p.at } : f); }
+};
+// ── IndexedDB: queue = คิวรอส่ง, snap = สำเนาข้อมูลล่าสุด (เปิดแอปตอนไม่มีเน็ต) ──
+const idb = (() => {
+  let dbp;
+  const open = () => dbp || (dbp = new Promise((res, rej) => { const r = indexedDB.open('tree-inspect', 1);
+    r.onupgradeneeded = () => { r.result.createObjectStore('queue', { keyPath: 'key', autoIncrement: true }); r.result.createObjectStore('snap'); };
+    r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); }));
+  const tx = async (store, mode, fn) => { const d = await open(); return new Promise((res, rej) => { const t = d.transaction(store, mode), r = fn(t.objectStore(store)); t.oncomplete = () => res(r && r.result); t.onerror = t.onabort = () => rej(t.error); }); };
+  return { tx };
+})();
+const queue = {
+  mine: async () => (await idb.tx('queue', 'readonly', s => s.getAll())).filter(o => o.user === S.me.id),
+  async add(type, p) {
+    const photos = p.photos && p.photos.map(({ label, file }) => ({ label, file }));   // objectURL ใช้ข้ามการเปิดแอปไม่ได้
+    try { await idb.tx('queue', 'readwrite', s => s.add({ type, p: { ...p, photos }, user: S.me.id })); }
+    catch (e) { throw new Error('บันทึกไว้ในเครื่องไม่ได้ (' + e.message + ')'); }
+    S.queue = (await queue.mine()).length;
+  },
+  del: key => idb.tx('queue', 'readwrite', s => s.delete(key))
+};
+const snap = {
+  save: () => idb.tx('snap', 'readwrite', s => s.put({ user: S.me.id, me: S.me, offices: S.offices, profiles: S.profiles, feeders: S.feeders, defects: S.defects, at: nowIso() }, 'last')).catch(() => {}),
+  get: () => idb.tx('snap', 'readonly', s => s.get('last')).catch(() => null),
+  clear: () => idb.tx('snap', 'readwrite', s => s.delete('last')).catch(() => {})
+};
+// ส่งคิวตามลำดับ · เน็ตหลุด = หยุดไว้ก่อน · error อื่น = หยุดและแจ้ง (ไม่ทิ้งข้อมูล)
+let flushing = false;
+async function flush() {
+  if (!LIVE || flushing || !S.online || !S.me) return;
+  const ops = await queue.mine(); if (!ops.length) return;
+  flushing = true; set({ syncing: true }); let n = 0, err = null;
+  for (const op of ops) { try { await srv[op.type](op.p); await queue.del(op.key); n++; } catch (e) { err = e; break; } }
+  flushing = false; S.syncing = false; S.queue = (await queue.mine()).length;
+  await refresh();
+  if (err && !isNetErr(err)) showToast('ส่งข้อมูลที่ค้างไม่สำเร็จ: ' + err.message + ' — จะลองใหม่อัตโนมัติ', 'err', 7000);
+  else if (n && !S.queue) showToast('ส่งข้อมูลที่ค้างในเครื่องครบแล้ว ' + n + ' รายการ', 'ok');
+}
+
+// ════════════════════════════════════════════════════════════════
+// STATE
+// ════════════════════════════════════════════════════════════════
+// LIVE: user = GPS จริง (null จนกว่าจะได้พิกัด) · สาธิต: ตำแหน่งจำลองจาก seed()
+const S = Object.assign(LIVE ? { feeders: [], defects: [], user: null, gpsErr: null } : seed(), {
+  offices: LIVE ? [] : MOCK_OFFICES, profiles: LIVE ? [] : MOCK_USERS,
+  screen: 'login', office: 'kce', role: 'inspector', loginId: LIVE ? '' : 'somchai.j', password: LIVE ? '' : 'demo1234', loginErr: null, me: null, credits: false, busy: false,
+  cur:null, view:'map', panel:{ mode:'list' }, chip:'all', sheet:null, draft:null, form:null, err:null,
+  online:true, syncing:false, queue:0, notifs:[], unread:0, showNotif:false, toast:null, fresh: new Set(),
+  base:'osm', legend:true, imp:{ step:'pick' }, wide:true, seq:432
+});
+function set(patch) { Object.assign(S, typeof patch === 'function' ? patch(S) : patch); render(); }
+const isInsp = () => S.me && S.me.role === 'inspector';
+const myName = () => isInsp() ? S.me.full_name + ' (ผู้ตรวจ)' : S.me.company;
+
+// ── geo / format helpers ──
+function hav(a, b) { const R = 6371000, r = Math.PI / 180; const dl = (b[0]-a[0])*r, dg = (b[1]-a[1])*r; const x = Math.sin(dl/2)**2 + Math.cos(a[0]*r)*Math.cos(b[0]*r)*Math.sin(dg/2)**2; return 2*R*Math.asin(Math.sqrt(x)); }
+function lenKm(p) { let s = 0; for (let i = 1; i < p.length; i++) s += hav(p[i-1], p[i]); return s / 1000; }
+function along(p, t) { const tot = lenKm(p)*1000*t; let acc = 0; for (let i = 1; i < p.length; i++) { const d = hav(p[i-1], p[i]); if (acc + d >= tot) { const f = (tot-acc)/d; return [p[i-1][0]+(p[i][0]-p[i-1][0])*f, p[i-1][1]+(p[i][1]-p[i-1][1])*f]; } acc += d; } return p[p.length-1]; }
+// point-to-polyline (equirectangular ใกล้ตัว) → [{seq, d(ม.)}] เรียงใกล้สุดก่อน
+function snapAll(lat, lng, f) {
+  const kx = 111320*Math.cos(lat*Math.PI/180), ky = 110540;
+  return f.segments.map(s => { let best = Infinity; const c = s.coords; for (let i = 1; i < c.length; i++) { const ax=(c[i-1][1]-lng)*kx, ay=(c[i-1][0]-lat)*ky, bx=(c[i][1]-lng)*kx, by=(c[i][0]-lat)*ky; const dx=bx-ax, dy=by-ay; let t = -(ax*dx+ay*dy)/(dx*dx+dy*dy||1); t = Math.max(0, Math.min(1, t)); best = Math.min(best, Math.hypot(ax+t*dx, ay+t*dy)); } return { seq: s.seq, d: best }; }).sort((a, b) => a.d - b.d);
+}
+const p2 = n => String(n).padStart(2, '0');
+const fmtDay = iso => { const d = new Date(iso); return d.getDate() + ' ' + M[d.getMonth()] + ' ' + p2((d.getFullYear()+543)%100); };
+const fmtAt = iso => { const d = new Date(iso); return fmtDay(iso) + ' · ' + p2(d.getHours()) + ':' + p2(d.getMinutes()); };
+const nowIso = () => new Date().toISOString();
+const fmtDist = m => m == null || !isFinite(m) ? '–' : m < 1000 ? (Math.round(m/10)*10) + ' ม.' : (m/1000).toFixed(1) + ' กม.';
+const distTo = (lat, lng) => S.user ? hav([S.user.lat, S.user.lng], [lat, lng]) : null;
+const segDist = s => S.user ? Math.min(...s.coords.map(c => hav([S.user.lat, S.user.lng], c))) : null;
+const densText = s => s.density_range ? s.density_label + ' (' + s.density_range + ')' : (s.density_label || '–');
+const dash = v => v == null || v === '' ? '–' : v;
+const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
+
+// ── derived ──
+const curF = () => S.feeders.find(x => x.id === S.cur);
+const dOf = (fid, seq) => S.defects.filter(d => d.feeder_id === fid && (seq == null || d.seq === seq));
+function segSt(f, s) { const ds = dOf(f.id, s.seq); if (ds.some(d => d.status !== 'passed')) return 'defect'; if (s.passed_at || ds.length) return 'pass'; return 'none'; }
+function segPassAt(f, s) {
+  if (segSt(f, s) !== 'pass') return '–'; if (s.passed_at) return fmtDay(s.passed_at);
+  let last = null; dOf(f.id, s.seq).forEach(d => d.events.forEach(h => { if (h.kind === 'passed') last = h.at; })); return last ? fmtDay(last) : '–';
+}
+function fStats(f) {
+  const ds = dOf(f.id), st = f.segments.map(s => segSt(f, s)), passN = st.filter(x => x === 'pass').length;
+  const out = ds.filter(d => d.status === 'open' || d.status === 'rejected').length, rev = ds.filter(d => d.status === 'submitted').length;
+  const km = f.segments.reduce((a, s) => a + s.length_km, 0), trees = f.segments.reduce((a, s) => a + (s.plan_trees || 0), 0);
+  const pct = f.segments.length ? Math.round(passN/f.segments.length*100) : 0;
+  const rounds = ds.reduce((a, d) => Math.max(a, d.round_no), f.segments.some(s => s.passed_at) ? 1 : 0);
+  return { ds, st, passN, out, rev, km, trees, pct, rounds, fresh: ds.filter(d => S.fresh.has(d.id)).length,
+    status: f.closed_at ? 'closed' : (out > 0 ? 'waiting' : 'active'), allPass: f.segments.length > 0 && passN === f.segments.length };
+}
+const myFeeders = () => S.feeders.filter(f => f.office === S.me.office && (isInsp() || f.contractor_id === S.me.id));
+
+// ── toast ──
+let toastT;
+function showToast(text, kind, ms) { clearTimeout(toastT); set({ toast: { text, kind } }); toastT = setTimeout(() => set({ toast: null }), ms || 3800); }
+
+// ════════════════════════════════════════════════════════════════
+// ACTIONS
+// ════════════════════════════════════════════════════════════════
+let rtT, rtDone = false;
+const defaultUser = (office, role) => (MOCK_USERS.find(u => u.office === office && u.role === role) || {}).username || '';
+// เรียก db + โหลดใหม่ + toast; work() คืน [ข้อความ, ชนิด toast, หลังเสร็จ?]
+async function run(work) {
+  if (S.busy) return; set({ busy: true });
+  try {
+    const [msg, kind, after] = await work();
+    await db.load(); S.busy = false;
+    if (after) after();
+    showToast(msg, kind);
+  } catch (e) {
+    S.busy = false; S.err = 'บันทึกไม่สำเร็จ: ' + e.message;
+    showToast(S.err, 'err', 6000);
+  }
+}
+async function refresh() { try { await db.load(); render(); } catch (e) { showToast('โหลดข้อมูลไม่สำเร็จ: ' + e.message, 'err', 6000); } }
+async function login() {
+  if (!S.loginId.trim() || !S.password) return set({ loginErr: 'กรุณากรอกชื่อผู้ใช้และรหัสผ่าน' });
+  if (LIVE && !S.online) return set({ loginErr: 'ไม่มีสัญญาณ — เข้าสู่ระบบครั้งแรกต้องออนไลน์' });
+  set({ busy: true, loginErr: null });
+  let u; try { u = await db.signIn(S.office, S.loginId, S.password); } catch (e) { return set({ busy: false, loginErr: e.message }); }
+  if (!u) return set({ busy: false, loginErr: LIVE ? 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง' : 'ไม่พบชื่อผู้ใช้นี้ใน ' + officeName(S.office) });
+  enter(u);
+}
+async function enter(u) {
+  S.me = u;
+  try { await db.load(); } catch (e) { showToast('โหลดข้อมูลไม่สำเร็จ: ' + e.message, 'err', 6000); }
+  set({ busy: false, loginErr: null, password: LIVE ? '' : S.password, screen: 'dash', cur: null, sheet: null, draft: null, showNotif: false });
+  clearTimeout(rtT);
+  if (LIVE) { db.subscribe(onRemoteEvent); startGps(); flush(); }
+  // ponytail: โหมดสาธิตจำลอง realtime ที่ 12 วิ
+  else if (u.role === 'inspector' && !rtDone) rtT = setTimeout(simRealtime, 12000);
+}
+async function logout() {
+  // ออกจากระบบตอนยังมีของรอส่ง = ข้อมูลหาย → ไม่ให้ออก
+  if (LIVE && S.queue) return showToast('ยังมีข้อมูลรอส่ง ' + S.queue + ' รายการ — ต่อเน็ตให้ส่งครบก่อนออกจากระบบ', 'err', 6000);
+  clearTimeout(rtT); db.unsubscribe(); await db.signOut(); if (LIVE) await snap.clear();
+  set({ me: null, screen: 'login', showNotif: false, sheet: null, draft: null, ...(LIVE ? { feeders: [], defects: [], notifs: [], unread: 0 } : {}) });
+}
+// ── GPS (LIVE) — ponytail: โหมดสาธิตใช้ตำแหน่งจำลองคงที่ ──
+let gpsId = null;
+function startGps() {
+  if (gpsId !== null || !navigator.geolocation) return;
+  gpsId = navigator.geolocation.watchPosition(p => {
+    const u = { lat: p.coords.latitude, lng: p.coords.longitude, acc: p.coords.accuracy, at: new Date(p.timestamp).toISOString() };
+    const moved = !S.user || hav([S.user.lat, S.user.lng], [u.lat, u.lng]) > 10;
+    S.user = u; S.gpsErr = null;
+    // ไม่ render ระหว่างพิมพ์ (focus/cursor จะหลุด) และไม่ render ถ้าขยับไม่ถึง 10 ม.
+    if (moved && S.me && !/INPUT|TEXTAREA|SELECT/.test((document.activeElement || {}).tagName)) render();
+  }, e => { S.gpsErr = e.code === 1 ? 'ไม่ได้รับอนุญาตให้ใช้ตำแหน่ง — เปิดสิทธิ์ตำแหน่งในเบราว์เซอร์' : 'หาตำแหน่ง GPS ไม่ได้'; },
+  { enableHighAccuracy: true, maximumAge: 5000, timeout: 30000 });
+}
+// ── ย่อรูปในเครื่อง: ด้านยาว ≤ 1600px, JPEG ลดคุณภาพจน ≤ ~300 KB ──
+async function shrink(file) {
+  if (!/^image\//.test(file.type)) return file;
+  try {
+    const img = await createImageBitmap(file, { imageOrientation: 'from-image' }), k = Math.min(1, 1600 / Math.max(img.width, img.height)), c = document.createElement('canvas');
+    c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); if (img.close) img.close();
+    let q = 0.82, b;
+    do { b = await new Promise(r => c.toBlob(r, 'image/jpeg', q)); q -= 0.1; } while (b.size > 300 * 1024 && q > 0.45);
+    return new File([b], file.name.replace(/\.\w+$/, '') + '.jpg', { type: 'image/jpeg' });
+  } catch (e) { return file; }   // ponytail: ถอดรหัสรูปไม่ได้ (เช่น HEIC บนเดสก์ท็อป) → ส่งไฟล์ต้นฉบับ
+}
+const readPhotos = async files => Promise.all(files.map(async f => { const s = await shrink(f); return { label: s.name, url: URL.createObjectURL(s), file: s }; }));
+// ผู้รับจ้างส่งหลักฐาน → badge + toast ของผู้ตรวจ
+function notifyFix(d, who, quiet) {
+  const f = S.feeders.find(x => x.id === d.feeder_id) || {};
+  S.notifs = [{ id: Date.now(), defectId: d.id, feederId: d.feeder_id, text: who + ' ส่งหลักฐานการแก้ไข ' + d.code, sub: f.code + ' · ช่วงที่ ' + d.seq + ' · ' + d.issue_type, at: nowIso() }, ...S.notifs];
+  S.unread++;
+  if (quiet) render(); else showToast('อัปเดตทันที: ' + d.code + ' ผู้รับจ้างส่งหลักฐานแล้ว · รอตรวจ', 'rt', 4500);
+}
+async function onRemoteEvent(e) {
+  if (!isInsp() || e.kind !== 'fix_submitted' || e.actor_id === S.me.id) return;
+  S.fresh.add(e.defect_id);
+  await refresh();
+  const d = S.defects.find(x => x.id === e.defect_id); if (d) notifyFix(d, whoOf(e.actor_id));
+}
+function simRealtime() {
+  if (!isInsp() || S.screen === 'login') return;
+  const d = S.defects.find(x => x.status === 'open' && x.feeder_id === 'MDA03R-04'); if (!d) return;
+  rtDone = true; const who = 'หจก. ร่มเย็นการโยธา';
+  S.defects = S.defects.map(x => x.id !== d.id ? x : { ...x, status: 'submitted', events: [...x.events, { kind: 'fix_submitted', round_no: x.round_no, at: nowIso(), note: 'ตัดกิ่งที่ค้างบนสายออกแล้ว ใช้รถกระเช้า', photos: [{ label: 'IMG_5201.jpg', url: null }, { label: 'IMG_5202.jpg', url: null }], pending: false, who }] });
+  S.fresh.add(d.id); notifyFix(d, who);
+}
+function openFeeder(id) { const con = !isInsp(); set({ screen: 'feeder', cur: id, panel: { mode: 'list' }, view: con ? 'list' : 'map', chip: con ? 'todo' : 'all', sheet: null, draft: null, showNotif: false }); }
+function selectSeg(seq) { if (S.draft) return; set({ panel: { mode: 'segment', seq } }); }
+function openDefect(id) {
+  if (S.draft) return;
+  if (isInsp()) S.fresh.delete(id);
+  set(s => ({ panel: { mode: 'defect', id, prev: s.panel.mode === 'defect' ? s.panel.prev : s.panel }, view: s.wide ? s.view : 'list', showNotif: false }));
+}
+const panelBack = () => set({ panel: S.panel.mode === 'defect' && S.panel.prev ? S.panel.prev : { mode: 'list' } });
+const closeSheet = () => set({ sheet: null, draft: null, form: null, err: null });
+function startDefect(seq) {
+  const f = curF(), u = S.user; let lat, lng, src;
+  if (seq) {
+    // จากแผงช่วง: ใช้ GPS ถ้ายืนอยู่ใกล้ช่วงนั้น (≤ 200 ม.) ไม่งั้นวางกลางช่วงให้ลากเอง
+    const s = f.segments.find(x => x.seq === seq), near = u && snapAll(u.lat, u.lng, f).find(o => o.seq === seq).d <= FAR_M * 4;
+    if (near) { lat = u.lat; lng = u.lng; src = 'gps'; } else { [lat, lng] = along(s.coords, .5); src = 'seg'; }
+  } else if (u) { lat = u.lat; lng = u.lng; src = 'gps'; }
+  else { const c = map ? map.getCenter() : L.latLngBounds(f.segments.flatMap(x => x.coords)).getCenter(); lat = c.lat; lng = c.lng; src = 'map'; }
+  if (!LIVE && src === 'gps') { lat += (Math.random()-.5)*0.00008; lng += (Math.random()-.5)*0.00008; }   // สาธิต: กระจายหมุดเล็กน้อย
+  const sn = snapAll(lat, lng, f), st = fStats(f);
+  centerTo = [lat, lng];
+  set({ sheet: 'defect', err: null, view: S.wide ? S.view : 'map', panel: { mode: 'list' }, draft: { lat, lng, src, seq: seq || sn[0].seq, manual: !!seq, photos: [], type: null, note: '', round: Math.max(1, st.rounds) } });
+}
+function moveDraft(lat, lng, src) { const sn = snapAll(lat, lng, curF()); set(s => ({ draft: { ...s.draft, lat, lng, src: src || 'drag', seq: sn[0].seq, manual: false } })); }
+const pendMsg = (r, okMsg, offMsg) => [r.pending ? offMsg : okMsg, r.pending ? 'off' : 'ok'];
+function saveDefect() {
+  const dr = S.draft; if (!dr.type) return set({ err: 'กรุณาเลือกประเภทปัญหา' });
+  const f = curF(), seg = f.segments.find(s => s.seq === dr.seq);
+  run(async () => {
+    const r = await db.do('createDefect', { id: uuid(), evId: uuid(), feederId: f.id, feederCode: f.code, segId: seg.id, seq: seg.seq, lat: dr.lat, lng: dr.lng, type: dr.type, note: dr.note, round: dr.round, photos: dr.photos });
+    Object.assign(S, { sheet: null, draft: null, err: null, panel: { mode: 'segment', seq: dr.seq } });
+    return pendMsg(r, 'บันทึกจุดบกพร่อง ' + r.code + ' แล้ว', 'บันทึก' + (LIVE ? 'จุดบกพร่อง' : ' ' + r.code) + 'ไว้ในเครื่อง · รอส่ง');
+  });
+}
+function passSeg(seq) {
+  const f = curF(), seg = f.segments.find(s => s.seq === seq);
+  run(async () => pendMsg(await db.do('passSegment', { feederId: f.id, segId: seg.id, seq }), 'บันทึก: ช่วงที่ ' + seq + ' ผ่านทั้งช่วง', 'ผ่านช่วงที่ ' + seq + ' · บันทึกไว้ในเครื่อง รอส่ง'));
+}
+const evPayload = (d, kind, note, photos) => ({ evId: uuid(), defectId: d.id, feederCode: (S.feeders.find(f => f.id === d.feeder_id) || {}).code, kind, note, photos,
+  round_no: kind === 'fix_submitted' ? d.round_no : d.round_no + 1 });
+function passDefect() {
+  const d = S.defects.find(x => x.id === S.panel.id);
+  run(async () => pendMsg(await db.do('addEvent', evPayload(d, 'passed', '', [])), d.code + ' ผ่านการตรวจ', d.code + ' ผ่านการตรวจ · บันทึกไว้ในเครื่อง รอส่ง'));
+}
+function saveReject() {
+  const fm = S.form; if (!fm.note.trim()) return set({ err: 'กรุณาระบุเหตุผลที่ไม่ผ่าน' });
+  const d = S.defects.find(x => x.id === fm.id);
+  run(async () => { const r = await db.do('addEvent', evPayload(d, 'rejected', fm.note, fm.photos)); Object.assign(S, { sheet: null, form: null, err: null });
+    return pendMsg(r, d.code + ' ไม่ผ่าน · ส่งกลับผู้รับจ้างแล้ว', d.code + ' ไม่ผ่าน · บันทึกไว้ในเครื่อง รอส่ง'); });
+}
+function saveFix() {
+  const fm = S.form; if (!fm.photos.length) return set({ err: 'กรุณาแนบรูปหลังแก้ไขอย่างน้อย 1 รูป' });
+  const d = S.defects.find(x => x.id === fm.id);
+  run(async () => {
+    const r = await db.do('addEvent', evPayload(d, 'fix_submitted', fm.note, fm.photos)); Object.assign(S, { sheet: null, form: null, err: null });
+    if (!LIVE && !r.pending) { S.fresh.add(d.id); notifyFix(d, myName(), true); }   // โหมดสาธิต: แจ้งผู้ตรวจที่ล็อกอินถัดไป
+    return pendMsg(r, 'ส่งหลักฐานการแก้ไข ' + d.code + ' แล้ว · รอผู้ตรวจ', 'บันทึกหลักฐานไว้ในเครื่อง · จะส่งเมื่อมีสัญญาณ');
+  });
+}
+function closeFeeder() { const f = curF(); run(async () => pendMsg(await db.do('closeFeeder', { feederId: f.id }), 'ปิดงาน Feeder ' + f.code + ' แล้ว', 'ปิดงาน Feeder ' + f.code + ' · บันทึกไว้ในเครื่อง รอส่ง')); }
+const demoPhoto = () => ({ label: 'IMG_' + (5200 + Math.floor(Math.random()*700)) + '.jpg', url: null });
+const nav = (lat, lng) => window.open('https://www.google.com/maps/dir/?api=1&destination=' + lat.toFixed(6) + ',' + lng.toFixed(6), '_blank');
+
+// ════════════════════════════════════════════════════════════════
+// KMZ PARSER — JSZip (แตก .kmz/.zip) + DOMParser (อ่าน KML)
+// ════════════════════════════════════════════════════════════════
+// description หลายบรรทัด "หัวข้อ: ค่า" → ฟิลด์; ค่าว่าง = null (ห้าม error)
+//   "สำรวจจัดทำแผน: 18 ต้น - เบาบาง (10-40 ต้น/กม.)" → plan_trees 18, density_label เบาบาง, density_range 10-40 ต้น/กม.
+//   "สำรวจจัดทำแผน: 2 ต้น - ที่โล่ง" → density_range null ; "สำรวจราคากลาง:  ต้น -" → price_trees null
+function parseDesc(raw) {
+  const kv = {};
+  (raw || '').replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '').split(/\r?\n/).forEach(l => { const i = l.indexOf(':'); if (i > 0) kv[l.slice(0, i).trim()] = l.slice(i + 1).trim(); });
+  const trees = s => { const m = /(\d+)\s*ต้น/.exec(s || ''); return m ? +m[1] : null; };
+  const plan = kv['สำรวจจัดทำแผน'] || '', dens = plan.split(/\s-\s/).slice(1).join(' - ').trim(), m = /^(.*?)\s*\((.*)\)$/.exec(dens);
+  return { voltage: kv['แรงดัน'] || null, plan_trees: trees(plan), density_label: (m ? m[1] : dens) || null, density_range: m ? m[2] : null, price_trees: trees(kv['สำรวจราคากลาง']) };
+}
+// "lon,lat,alt lon,lat,alt …" → [[lat,lng], …]
+const parseCoords = t => (t || '').trim().split(/\s+/).map(p => p.split(',').map(Number)).filter(a => isFinite(a[0]) && isFinite(a[1])).map(a => [a[1], a[0]]);
+// 1 Placemark ที่มี LineString = 1 ช่วง (ไฟล์เดียวมีได้หลาย Placemark)
+function parseKml(text, file) {
+  const doc = new DOMParser().parseFromString(text, 'application/xml');
+  if (doc.getElementsByTagName('parsererror').length) throw new Error('KML เสีย');
+  const child = (el, tag) => [...el.children].find(c => c.localName === tag);
+  const segs = [...doc.getElementsByTagName('Placemark')].map(pm => {
+    const lines = [...pm.getElementsByTagName('LineString')].map(ls => parseCoords((ls.getElementsByTagName('coordinates')[0] || {}).textContent)).filter(c => c.length >= 2);
+    if (!lines.length) return null;
+    const raw = (child(pm, 'description') || {}).textContent || '', name = ((child(pm, 'name') || {}).textContent || '').trim();
+    // ponytail: หลาย LineString ใน Placemark เดียว → ต่อพิกัดเป็นเส้นเดียว (ความยาวรวมแยกเส้นถูกต้อง แต่เส้นบนแผนที่จะมีเส้นเชื่อม)
+    return { seq: parseInt(name) || parseInt(file) || null, ...parseDesc(raw), coords: lines.flat(), length_km: lines.reduce((a, c) => a + lenKm(c), 0),
+      source_file: file, raw_description: raw, passed_at: null, pending: false };
+  }).filter(Boolean);
+  if (!segs.length) throw new Error('ไม่พบ LineString');
+  return segs;
+}
+async function readKmz(name, blob) {
+  if (/\.kml$/i.test(name)) return parseKml(await blob.text(), name);
+  let zip; try { zip = await JSZip.loadAsync(blob); } catch (e) { throw new Error('ไฟล์เสีย'); }
+  const kml = zip.file(/\.kml$/i)[0]; if (!kml) throw new Error('ไม่พบ doc.kml');
+  return parseKml(await kml.async('string'), name);
+}
+async function impPickFiles(e) {
+  const files = Array.from(e.target.files || []); e.target.value = ''; if (!files.length) return;
+  set({ imp: { step: 'pick', loading: true } });
+  const fail = msg => set({ imp: { step: 'pick', error: msg } });
+  let folder = '', entries = [];
+  if (files.length === 1 && /\.zip$/i.test(files[0].name)) {
+    let z; try { z = await JSZip.loadAsync(files[0]); } catch (err) { return fail('เปิดไฟล์ .zip ไม่ได้ — ไฟล์อาจเสีย'); }
+    entries = await Promise.all(z.file(/\.km[lz]$/i).filter(f => !f.name.startsWith('__MACOSX')).map(async f => { const p = f.name.split('/'); return { name: p.pop(), dir: p.pop() || '', blob: await f.async('blob') }; }));
+    const dirs = [...new Set(entries.map(x => x.dir))];
+    // ชื่อโฟลเดอร์ใน zip อาจเพี้ยนถ้า zip ไม่ได้เข้ารหัส UTF-8 → ใช้ชื่อไฟล์ zip แทน
+    folder = dirs.length === 1 && dirs[0] && !dirs[0].includes('�') ? dirs[0] : files[0].name.replace(/\.zip$/i, '');
+  } else {
+    const rel = files[0].webkitRelativePath || ''; if (rel.includes('/')) folder = rel.split('/')[0];
+    entries = files.filter(f => /\.km[lz]$/i.test(f.name)).map(f => ({ name: f.name, blob: f }));
+  }
+  if (!entries.length) return fail('ไม่พบไฟล์ .kmz ในสิ่งที่เลือก — ตรวจสอบว่าเลือกโฟลเดอร์ Feeder ที่ถูกต้อง');
+  const segs = [], bad = [];
+  for (const en of entries) { try { segs.push(...await readKmz(en.name, en.blob)); } catch (err) { bad.push(en.name + ' (' + err.message + ')'); } }
+  buildImport(folder, segs, bad);
+}
+// "MDA03R-04 ไลน์เหล่าสร้างถ่อ" → แยกที่ช่องว่างแรก
+function splitFolder(folder) { const t = folder.trim(), i = t.search(/\s/); return i < 0 ? [t.toUpperCase(), ''] : [t.slice(0, i).toUpperCase(), t.slice(i).trim()]; }
+function buildImport(folder, segs, bad) {
+  const [code, line] = splitFolder(folder), ex = byCode(code), seen = new Set(), out = [];
+  segs.sort((a, b) => (a.seq || 1e9) - (b.seq || 1e9) || a.source_file.localeCompare(b.source_file, undefined, { numeric: true }));
+  let next = Math.max(0, ...segs.map(s => s.seq || 0));
+  for (const s of segs) {
+    if (s.seq == null) s.seq = ++next;                    // ไม่มีลำดับในชื่อ → ต่อท้าย
+    if (seen.has(s.seq)) { bad.push(s.source_file + ' (ลำดับช่วง ' + s.seq + ' ซ้ำในชุดที่เลือก)'); continue; }
+    seen.add(s.seq); out.push(s);
+  }
+  set({ imp: { step: 'preview', folder: folder || '(เลือกเป็นไฟล์ — ไม่มีชื่อโฟลเดอร์)', code, line, contractor: ex ? ex.contractor_id : (contractorsOf(S.me.office)[0] || {}).id || null, segs: out, bad, mode: 'append', err: null } });
+}
+// ponytail: ปุ่ม "ทดลองด้วยข้อมูลตัวอย่าง" ใช้เส้นจำลอง — เอาออกเฟส 3–4
+function mockImport(folder, nums, badNums) {
+  const code = splitFolder(folder)[0], ex = byCode(code); let h = 7; for (const ch of code) h = (h*31 + ch.charCodeAt(0)) % 100000;
+  const rnd = rng(h + 7), ok = nums.filter(n => !badNums.includes(n));
+  let start = [16.49 + rnd()*0.12, 104.57 + rnd()*0.14], hd = rnd()*6.28;
+  if (ex) { const ls = ex.segments[ex.segments.length-1]; start = ls.coords[ls.coords.length-1]; hd = 1.2; }
+  const lines = genLine(start, hd, ok.length, rnd);
+  buildImport(folder, ok.map((n, i) => mkSeg(n, lines[i], rnd)), badNums.map(n => n + '.kmz (ไม่พบ LineString)'));
+}
+const byCode = code => S.feeders.find(f => f.code === code && f.office === S.me.office);
+function impConfirm() {
+  const im = S.imp, { code, ex, used } = impCalc(), line = im.line.trim();
+  if (!code) return set({ imp: { ...im, err: 'กรุณากรอกรหัส Feeder' } });
+  if (LIVE && !S.online) return set({ imp: { ...im, err: 'ไม่มีสัญญาณ — การนำเข้า Feeder ต้องออนไลน์' } });
+  const segs = ex && im.mode === 'append' ? used : im.segs;
+  run(async () => {
+    const fid = await db.importFeeder(ex, code, line, im.contractor, im.mode, segs);
+    S.imp = { step: 'pick' };
+    return ['นำเข้า ' + code + ' แล้ว · ' + segs.length + ' ช่วงงานตัด', 'ok', () => openFeeder(fid)];
+  });
+}
+
+// ════════════════════════════════════════════════════════════════
+// OFFLINE QUEUE — ponytail: จำลองด้วยปุ่มใน header (เฟส 1), ใช้ IndexedDB + navigator.onLine ในเฟส 4
+// ════════════════════════════════════════════════════════════════
+function toggleOnline() {
+  if (S.online) return set({ online: false });
+  const n = S.queue; if (!n) return set({ online: true });
+  set({ online: true, syncing: true });
+  setTimeout(() => {
+    S.syncing = false; S.queue = 0;
+    S.feeders = S.feeders.map(f => ({ ...f, segments: f.segments.map(x => x.pending ? { ...x, pending: false } : x) }));
+    S.defects = S.defects.map(d => ({ ...d, events: d.events.map(h => h.pending ? { ...h, pending: false } : h) }));
+    showToast('ส่งข้อมูลที่ค้างในเครื่องครบแล้ว ' + n + ' รายการ', 'ok');
+  }, 1800);
+}
+
+// ════════════════════════════════════════════════════════════════
+// MAP — container ถาวร ย้ายเข้า slot หลังทุก render (Leaflet ไม่ต้องสร้างใหม่)
+// ════════════════════════════════════════════════════════════════
+const mapEl = document.createElement('div'), miniEl = document.createElement('div');
+mapEl.style.cssText = miniEl.style.cssText = 'position:absolute;inset:0;background:#E8E4EA';
+let map, layer, tiles, tilesBase, sig, fitKey, centerTo, mini, miniLayer, miniSig;
+const numIcon = (n, border, z, r) => L.divIcon({ className: '', iconSize: [z, z], html: '<div style="width:' + z + 'px;height:' + z + 'px;border-radius:' + r + 'px;background:#fff;border:3px solid ' + border + ';color:#1C1324;font:800 13px Sarabun,sans-serif;display:flex;align-items:center;justify-content:center;box-shadow:0 1px 4px rgba(0,0,0,.35)">' + n + '</div>' });
+function syncMaps() { if (!window.L) return setTimeout(syncMaps, 300); syncMain(); syncMini(); }
+function syncMain() {
+  const f = curF(); if (S.screen !== 'feeder' || !f || !mapEl.isConnected) return;
+  if (!map) {
+    map = L.map(mapEl, { zoomControl: false }); L.control.zoom({ position: 'bottomright' }).addTo(map);
+    layer = L.layerGroup().addTo(map);
+    map.on('click', e => { if (S.draft) moveDraft(e.latlng.lat, e.latlng.lng); else if (S.panel.mode === 'segment' && !S.wide) set({ panel: { mode: 'list' } }); });
+  }
+  if (tilesBase !== S.base) { if (tiles) tiles.remove(); tiles = L.tileLayer(TILES[S.base][0], { maxZoom: 19, attribution: TILES[S.base][1] }).addTo(map); tiles.bringToBack(); tilesBase = S.base; }
+  const selSeg = S.panel.mode === 'segment' ? S.panel.seq : null, selDef = S.panel.mode === 'defect' ? S.panel.id : null, ds = dOf(f.id), dr = S.draft;
+  const sg = JSON.stringify([f.id, f.segments.length, f.segments.map(x => segSt(f, x)), ds.map(d => [d.id, d.status, d.lat, d.lng]), selSeg, selDef, dr && [dr.lat, dr.lng, dr.seq], S.user]);
+  if (sg !== sig) {
+    sig = sg; layer.clearLayers();
+    f.segments.forEach(s => {
+      const st = segSt(f, s), c = SEG[st].solid, sel = selSeg === s.seq || (dr && dr.seq === s.seq);
+      L.polyline(s.coords, { color: sel ? P : '#fff', weight: sel ? 15 : 11, opacity: .95, interactive: false }).addTo(layer);
+      L.polyline(s.coords, { color: c, weight: 6, dashArray: st === 'none' ? '8 9' : null, interactive: false }).addTo(layer);
+      L.polyline(s.coords, { color: '#000', weight: 26, opacity: 0 }).on('click', e => { L.DomEvent.stopPropagation(e); if (S.draft) return moveDraft(e.latlng.lat, e.latlng.lng); selectSeg(s.seq); }).addTo(layer);
+      L.marker(along(s.coords, .5), { icon: numIcon(s.seq, sel ? P : c, 28, 8) }).on('click', () => selectSeg(s.seq)).addTo(layer);
+    });
+    ds.forEach(d => {
+      const k = DEF[d.status], sel = d.id === selDef, z = sel ? 38 : 30;
+      L.marker([d.lat, d.lng], { zIndexOffset: sel ? 900 : 500, icon: L.divIcon({ className: '', iconSize: [z, z], html: '<div style="width:' + z + 'px;height:' + z + 'px;border-radius:' + k.shape + ';background:' + k.solid + ';border:3px solid #fff;box-shadow:0 0 0 ' + (sel ? 3 : 0) + 'px ' + P + ',0 2px 6px rgba(0,0,0,.45);color:#fff;font:800 15px Sarabun,sans-serif;display:flex;align-items:center;justify-content:center">' + k.glyph + '</div>' }) }).on('click', () => openDefect(d.id)).addTo(layer);
+    });
+    if (S.user) L.circle([S.user.lat, S.user.lng], { radius: Math.max(18, Math.min(S.user.acc || 18, 200)), color: '#1565C0', weight: 1, fillOpacity: .12, interactive: false }).addTo(layer);
+    if (S.user) L.circleMarker([S.user.lat, S.user.lng], { radius: 8, color: '#fff', weight: 3, fillColor: '#1565C0', fillOpacity: 1, interactive: false }).addTo(layer);
+    if (dr) {
+      L.marker([dr.lat, dr.lng], { draggable: true, zIndexOffset: 1000, icon: L.divIcon({ className: '', iconSize: [34, 46], iconAnchor: [17, 44], html: '<svg width="34" height="46" viewBox="0 0 34 46"><path d="M17 44C17 44 3 26 3 16a14 14 0 0 1 28 0c0 10-14 28-14 28z" fill="' + P + '" stroke="#fff" stroke-width="3"/><circle cx="17" cy="16" r="5" fill="#fff"/></svg>' }) })
+        .on('dragend', e => { const p = e.target.getLatLng(); moveDraft(p.lat, p.lng); }).addTo(layer);
+    }
+  }
+  requestAnimationFrame(() => {
+    if (!map || !mapEl.offsetWidth) return; // ซ่อนอยู่ (มุมมองรายการบนมือถือ) — fit ตอนแสดงจริง
+    map.invalidateSize();
+    const fk = f.id + ':' + f.segments.length;
+    if (fitKey !== fk) { fitKey = fk; map.fitBounds(L.latLngBounds(f.segments.flatMap(x => x.coords)), { padding: [40, 40] }); }
+    if (centerTo) { const c = centerTo; centerTo = null; map.setView(c, Math.max(map.getZoom(), 17)); if (!S.wide && S.sheet) map.panBy([0, map.getSize().y * 0.25]); }
+  });
+}
+function syncMini() {
+  if (S.screen !== 'import' || S.imp.step !== 'preview' || !miniEl.isConnected) return;
+  if (!mini) { mini = L.map(miniEl, { zoomControl: false, attributionControl: false }); L.tileLayer(TILES.osm[0], { maxZoom: 19 }).addTo(mini); miniLayer = L.layerGroup().addTo(mini); }
+  const im = S.imp, segs = im.segs || [], ex = byCode((im.code || '').trim().toUpperCase());
+  const sg = JSON.stringify([im.folder, segs.length, ex && ex.id, im.mode]);
+  if (sg !== miniSig) {
+    miniSig = sg; miniLayer.clearLayers();
+    if (ex && im.mode === 'append') ex.segments.forEach(s => L.polyline(s.coords, { color: '#9A8FA3', weight: 4, dashArray: '6 6' }).addTo(miniLayer));
+    segs.forEach(s => { L.polyline(s.coords, { color: '#fff', weight: 9 }).addTo(miniLayer); L.polyline(s.coords, { color: P, weight: 5 }).addTo(miniLayer); L.marker(along(s.coords, .5), { icon: numIcon(s.seq, P, 24, 6) }).addTo(miniLayer); });
+  }
+  requestAnimationFrame(() => {
+    mini.invalidateSize();
+    const all = [...segs, ...(ex && im.mode === 'append' ? ex.segments : [])].flatMap(s => s.coords);
+    if (all.length) mini.fitBounds(L.latLngBounds(all), { padding: [24, 24] });
+  });
+}
+
+// ════════════════════════════════════════════════════════════════
+// VIEWS
+// ════════════════════════════════════════════════════════════════
+const tile = (v, l, fg, big) => `<div class="tile"${big ? ' style="padding:14px 16px"' : ''}><b style="color:${fg || '#1C1324'}${big ? ';font-size:30px' : ''}">${v}</b><span>${l}</span></div>`;
+const fact = (l, v) => `<div class="fact"><div>${l}</div><div>${esc(v)}</div></div>`;
+const pill = (st, extra) => `<span class="pill" style="background:${st.bg};color:${st.fg}${extra || ''}">${st.glyph} ${st.label}</span>`;
+const photo = (ph, cls) => `<div class="ph ${cls || ''}">${ph.url ? `<i style="background-image:url('${ph.url}')"></i>` : ''}<span>${esc(ph.label)}</span></div>`;
+const CAM = '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3.5"/></svg>';
+const FOLDER = (sz, sw) => `<svg width="${sz}" height="${sz}" viewBox="0 0 24 24" fill="none" stroke="${P}" stroke-width="${sw}" stroke-linejoin="round"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5H9l2 2.5h8.5A1.5 1.5 0 0 1 21 9v9.5a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z"/></svg>`;
+const camInput = fileAct => `<label class="cam"><input type="file" accept="image/*" capture="environment" multiple data-file="${fileAct}" style="display:none">${CAM}ถ่ายรูป</label>`;
+// ปุ่ม chip เลือกได้ (ม่วงเต็มเมื่อเลือก)
+const chipBtn = (on, label, act, arg, css) => `<button data-act="${act}" data-arg="${esc(arg)}" style="${css};border:1.5px solid ${on ? P : '#C9BED1'};background:${on ? P : '#fff'};color:${on ? '#fff' : '#1C1324'}">${esc(label)}</button>`;
+const CHIP_TYPE = 'min-height:44px;padding:6px 14px;border-radius:22px;font-size:15px;font-weight:700';
+const CHIP_SEG = 'min-height:40px;padding:4px 12px;border-radius:20px;font-size:14px;font-weight:700';
+const CHIP_FILTER = 'flex:none;height:40px;padding:0 14px;border-radius:20px;font-size:15px;font-weight:700;white-space:nowrap';
+
+function vHeader() {
+  if (S.screen === 'login') return '';
+  const f = curF(), insp = isInsp();
+  const t = { dash: ['ระบบตรวจรับงานตัดต้นไม้', insp ? S.me.full_name + ' · ผู้ตรวจ ' + officeName(S.me.office) : S.me.company + ' · ผู้รับจ้าง'],
+    import: ['นำเข้า Feeder', 'เลือกโฟลเดอร์ KMZ'], feeder: [f && f.code, f && f.line], report: ['รายงานสรุป ' + (f ? f.code : ''), f && f.line], fdash: ['ความคืบหน้า ' + (f ? f.code : ''), f && f.line] }[S.screen] || ['', ''];
+  const net = S.online ? { bg: 'rgba(255,255,255,.14)', fg: '#fff', dot: '#7CE08A', label: 'ออนไลน์' } : { bg: '#FFE082', fg: '#2B2230', dot: '#2B2230', label: 'ออฟไลน์' };
+  const banner = !S.online ? { bg: '#2B2230', fg: '#FFE082', icon: '!', text: S.queue ? 'ออฟไลน์ — บันทึกไว้ในเครื่อง ' + S.queue + ' รายการ รอส่ง' : 'ออฟไลน์ — ข้อมูลที่บันทึกจะเก็บไว้ในเครื่อง รอส่ง' }
+    : S.syncing ? { bg: '#FFEFD6', fg: '#7A3B00', icon: '↻', text: 'กลับมาออนไลน์ — กำลังส่ง ' + S.queue + ' รายการ…' }
+    : S.queue ? { bg: '#FFEFD6', fg: '#7A3B00', icon: '!', text: 'มีข้อมูลรอส่ง ' + S.queue + ' รายการ — จะส่งอัตโนมัติเมื่อสัญญาณดี (แตะป้ายออนไลน์เพื่อลองส่ง)' } : null;
+  return `<div data-noprint style="flex:none;height:60px;background:${P};color:#fff;display:flex;align-items:center;gap:6px;padding:0 8px 0 4px;position:relative;z-index:1100">
+    ${S.screen !== 'dash' ? `<button data-act="back" aria-label="ย้อนกลับ" style="flex:none;width:48px;height:48px;border:0;border-radius:24px;background:transparent;color:#fff;font-size:32px;line-height:1">‹</button>`
+      : `<div style="flex:none;width:40px;height:40px;margin-left:8px;border-radius:10px;background:#fff;color:${P};display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px">กฟภ.</div>`}
+    <div style="flex:1;min-width:0;padding-left:6px">
+      <div style="font-size:17px;font-weight:700;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(t[0])}</div>
+      <div style="font-size:13px;line-height:1.3;opacity:.92;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(t[1])}</div>
+    </div>
+    <button data-act="toggleOnline" title="${LIVE ? (S.queue ? 'แตะเพื่อส่งข้อมูลที่ค้าง' : 'สถานะเครือข่าย') : 'แตะเพื่อจำลองสถานะเครือข่าย'}" style="flex:none;height:36px;padding:0 12px;border-radius:18px;border:1.5px solid rgba(255,255,255,.6);background:${net.bg};color:${net.fg};font-size:14px;font-weight:700;display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:${net.dot}"></span>${net.label}</button>
+    ${insp ? `<button data-act="toggleNotif" aria-label="การแจ้งเตือน" style="flex:none;position:relative;width:44px;height:44px;border:0;border-radius:22px;background:transparent;color:#fff;display:flex;align-items:center;justify-content:center">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+      ${S.unread ? `<span style="position:absolute;top:3px;right:1px;min-width:20px;height:20px;padding:0 5px;border-radius:10px;background:#FFD54F;color:#2B2230;font-size:12px;font-weight:800;display:flex;align-items:center;justify-content:center;border:2px solid ${P}">${S.unread}</span>` : ''}</button>` : ''}
+    <button data-act="logout" style="flex:none;height:40px;padding:0 8px;border:0;background:transparent;color:#fff;font-size:14px;font-weight:600;text-decoration:underline">ออก</button>
+  </div>
+  ${banner ? `<div data-noprint style="flex:none;display:flex;align-items:center;gap:10px;padding:10px 16px;background:${banner.bg};color:${banner.fg};font-size:15px;font-weight:700;position:relative;z-index:1050"><span style="flex:none;width:24px;height:24px;border-radius:50%;border:2px solid currentColor;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:800">${banner.icon}</span><span style="flex:1">${banner.text}</span></div>` : ''}`;
+}
+
+function vLogin() {
+  const roles = [['inspector', 'ตรวจ', 'เจ้าหน้าที่ กฟภ. (ผู้ตรวจ)', 'นำเข้า Feeder · ออกตรวจ · ปักจุดบกพร่อง · ปิดงาน'], ['contractor', 'รับจ้าง', 'ผู้รับจ้าง', 'ดูผลตรวจ · นำทาง · ส่งหลักฐานการแก้ไข']].map(([k, abbr, title, desc]) => {
+    const on = S.role === k;
+    return `<button data-act="pickRole" data-arg="${k}" style="display:flex;align-items:center;gap:14px;text-align:left;min-height:76px;padding:12px 14px;border-radius:12px;border:2px solid ${on ? P : '#DDD5E2'};background:${on ? '#F7F0FA' : '#fff'}">
+      <div style="flex:none;width:48px;height:48px;border-radius:12px;background:${on ? P : '#EFEAF2'};color:${on ? '#fff' : P};display:flex;align-items:center;justify-content:center;font-weight:800;font-size:14px">${abbr}</div>
+      <div style="flex:1;min-width:0"><div style="font-size:17px;font-weight:700;color:#1C1324">${title}</div><div style="font-size:14px;color:#5E5566;line-height:1.35">${desc}</div></div>
+      <div style="flex:none;width:26px;height:26px;border-radius:50%;border:2px solid ${on ? P : '#DDD5E2'};background:${on ? P : '#fff'};color:#fff;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:800">${on ? '✓' : ''}</div></button>`;
+  }).join('');
+  const credit = (n, name, pos, last) => `<div style="display:flex;gap:12px;align-items:center;padding:12px 0;${last ? '' : 'border-bottom:1px solid #ECE6EF'}"><span style="flex:none;width:32px;height:32px;border-radius:50%;background:#F1E7F6;color:${P};font-weight:800;display:flex;align-items:center;justify-content:center">${n}</span><div><div style="font-size:16px;font-weight:700">${name}</div><div style="font-size:14px;color:#5E5566">${pos}</div></div></div>`;
+  return `<div data-scroll="login" class="scroll">
+    <div style="background:${P};color:#fff;padding:40px 24px 64px"><div style="max-width:440px;margin:0 auto;display:flex;flex-direction:column;gap:18px">
+      <div style="width:64px;height:64px;border-radius:16px;background:#fff;color:${P};display:flex;align-items:center;justify-content:center;font-weight:800;font-size:19px">กฟภ.</div>
+      <div><div style="font-size:28px;font-weight:800;line-height:1.25;text-wrap:pretty">ระบบตรวจรับงานตัดต้นไม้</div><div style="font-size:16px;opacity:.92;margin-top:4px">การไฟฟ้าส่วนภูมิภาค · PEA Tree Trimming Inspection</div></div>
+    </div></div>
+    <div style="max-width:440px;margin:-36px auto 0;padding:0 16px 32px;display:flex;flex-direction:column;gap:16px">
+      <div style="background:#fff;border-radius:16px;box-shadow:0 4px 20px rgba(28,19,36,.12);padding:20px;display:flex;flex-direction:column;gap:12px">
+        <label class="lbl"><span>การไฟฟ้า</span><select class="inp" data-in="office" data-rr style="padding:0 10px">${S.offices.map(o => `<option value="${o.id}"${o.id === S.office ? ' selected' : ''}>${esc(o.name)}</option>`).join('')}</select></label>
+        <div style="font-size:15px;font-weight:700;color:#4A3F52;margin-top:6px">เลือกบทบาท</div>
+        ${roles}
+        <label class="lbl" style="margin-top:6px"><span>ชื่อผู้ใช้</span><input class="inp" data-in="loginId" value="${esc(S.loginId)}" autocomplete="username" autocapitalize="off"></label>
+        <label class="lbl"><span>รหัสผ่าน</span><input class="inp" type="password" data-in="password" value="${esc(S.password)}" autocomplete="current-password"></label>
+        ${S.loginErr ? `<div style="font-size:15px;font-weight:700;color:#B3261E">${esc(S.loginErr)}</div>` : ''}
+        <button data-act="login" style="height:56px;margin-top:6px;border:0;border-radius:12px;background:${P};color:#fff;font-size:18px;font-weight:700">${S.busy ? 'กำลังเข้าสู่ระบบ…' : S.role === 'inspector' ? 'เข้าสู่ระบบ (ผู้ตรวจ)' : 'เข้าสู่ระบบ (ผู้รับจ้าง)'}</button>
+      </div>
+      <div style="font-size:14px;color:#5E5566;text-align:center;text-wrap:pretty">ผู้รับจ้างจะเห็นเฉพาะ Feeder ที่ได้รับมอบหมายเท่านั้น<br>ชื่อผู้ใช้และรหัสผ่านออกให้โดยการไฟฟ้า</div>
+      <button data-act="credits" data-arg="1" style="align-self:center;height:44px;padding:0 18px;border:1.5px solid #C9BED1;border-radius:22px;background:#fff;color:${P};font-size:15px;font-weight:700">เครดิตผู้พัฒนา</button>
+    </div>
+    ${S.credits ? `<div data-act="credits" data-arg="" style="position:absolute;inset:0;z-index:1400;background:rgba(28,19,36,.55);display:flex;align-items:center;justify-content:center;padding:20px">
+      <div data-act="noop" style="width:min(100%,400px);background:#fff;border-radius:18px;box-shadow:0 12px 40px rgba(0,0,0,.35);overflow:hidden">
+        <div style="background:${P};color:#fff;padding:18px 20px;display:flex;align-items:center;gap:12px"><div style="flex:1;min-width:0"><div style="font-size:19px;font-weight:800">เครดิตผู้พัฒนา</div><div style="font-size:14px;opacity:.92">ระบบตรวจรับงานตัดต้นไม้ กฟภ.</div></div>
+          <button data-act="credits" data-arg="" aria-label="ปิด" style="flex:none;width:44px;height:44px;border:0;border-radius:22px;background:rgba(255,255,255,.16);color:#fff;font-size:18px">✕</button></div>
+        <div style="padding:8px 20px 20px;display:flex;flex-direction:column">
+          ${credit(1, 'นายพชระ ปรีดากรณ์', 'วศก.ผปร.กฟส.คช')}${credit(2, 'นายสุทธิรักษ์ เนืองเฉลิม', 'พชง.ผปร.กฟส.คช.')}${credit(3, 'ภัคพล คนซื่อ', 'พชง.ผปร.กฟส.คช.', true)}
+          <button data-act="credits" data-arg="" style="margin-top:12px;height:52px;border:0;border-radius:12px;background:${P};color:#fff;font-size:17px;font-weight:700">ปิด</button>
+        </div></div></div>` : ''}
+  </div>`;
+}
+
+function vDash() {
+  const insp = isInsp(), fs = myFeeders(), all = fs.map(x => [x, fStats(x)]), sum = k => all.reduce((a, [, st]) => a + st[k], 0);
+  const tiles = insp ? [[fs.length, 'Feeder', P], [sum('km').toFixed(1), 'ระยะทางรวม (กม.)'], [sum('out'), 'จุดบกพร่องค้าง', '#C62828'], [sum('rev'), 'รอตรวจซ้ำ', '#B85C00']]
+    : [[sum('out'), 'จุดที่ต้องแก้ไข', '#C62828'], [sum('rev'), 'ส่งแล้ว รอตรวจ', '#B85C00'], [all.reduce((a, [, st]) => a + st.ds.filter(d => d.status === 'passed').length, 0), 'ผ่านแล้ว', '#2E7D32']];
+  const cards = all.map(([x, st]) => {
+    const fresh = insp && st.fresh > 0, id = esc(x.id), stat = (v, l, fg) => `<div style="background:#F6F3F8;border-radius:10px;padding:7px 6px;text-align:center"><div style="font-size:20px;font-weight:800;line-height:1.15;color:${fg || '#1C1324'}">${v}</div><div style="font-size:13px;color:#5E5566">${l}</div></div>`;
+    return `<div style="background:#fff;border:1px solid ${fresh ? '#E87500' : '#E3DCE8'};border-radius:14px;padding:16px;display:flex;flex-direction:column;gap:14px">
+      <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start"><div style="min-width:0">
+        <div class="mono" style="font-weight:700;font-size:22px;color:${P};line-height:1.2">${esc(x.code)}</div><div style="font-size:17px;font-weight:700">${esc(x.line)}</div><div style="font-size:14px;color:#5E5566">${esc(x.contractor)}</div></div>
+        ${pill(FEED[st.status], ';flex:none')}</div>
+      ${fresh ? `<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:10px;background:#FFEFD6;color:#7A3B00;font-size:14px;font-weight:700"><span style="width:9px;height:9px;border-radius:50%;background:#E87500"></span>อัปเดตทันที · ผู้รับจ้างส่งหลักฐานใหม่ ${st.fresh} จุด</div>` : ''}
+      <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px">${stat(x.segments.length, 'ช่วง')}${stat(st.km.toFixed(2), 'กม.')}${stat(st.trees, 'ต้น')}${stat(st.ds.length, 'จุดบกพร่อง')}${stat(st.out, 'ค้างแก้', st.out ? '#C62828' : '#5E5566')}${stat(st.rev, 'รอตรวจ', st.rev ? '#B85C00' : '#5E5566')}</div>
+      <div style="display:flex;flex-direction:column;gap:6px"><div style="display:flex;justify-content:space-between;font-size:14px"><span style="color:#5E5566">ช่วงที่ผ่าน ${st.passN}/${x.segments.length}</span><b>${st.pct}%</b></div>
+        <div style="display:flex;gap:2px;height:12px;border-radius:4px;overflow:hidden">${x.segments.map((s, i) => `<div title="ช่วงที่ ${s.seq} · ${SEG[st.st[i]].label}" style="flex:${s.length_km.toFixed(3)} 1 0;background:${{ none: '#CFC8D4', defect: '#C62828', pass: '#2E7D32' }[st.st[i]]}"></div>`).join('')}</div></div>
+      ${insp ? `<div style="display:grid;grid-template-columns:1.2fr 1fr 1fr;gap:8px"><button data-act="fdash" data-arg="${id}" class="bp" style="border-radius:10px;font-size:15px">ความคืบหน้า</button><button data-act="openFeeder" data-arg="${id}" class="bo" style="border-radius:10px;font-size:15px">แผนที่</button><button data-act="report" data-arg="${id}" class="bo" style="border-radius:10px;font-size:15px">รายงาน</button></div>`
+        : `<div style="display:grid;grid-template-columns:1.6fr 1fr;gap:8px"><button data-act="openFeeder" data-arg="${id}" class="bp" style="height:52px;border-radius:10px">${st.out ? 'ดูจุดที่ต้องแก้ (' + st.out + ')' : 'ดูผลตรวจ'}</button><button data-act="fdash" data-arg="${id}" class="bo" style="height:52px;border-radius:10px;font-size:15px">ความคืบหน้า</button></div>`}
+    </div>`;
+  }).join('');
+  return `<div data-scroll="dash" class="scroll"><div style="max-width:1200px;margin:0 auto;padding:20px 16px 120px;display:flex;flex-direction:column;gap:18px">
+    <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap">
+      <div><div style="font-size:15px;color:#5E5566">${esc(insp ? 'สวัสดี คุณ' + S.me.full_name + ' · ผู้ตรวจ ' + officeName(S.me.office) : S.me.company + ' · ผู้รับจ้าง')}</div><div style="font-size:26px;font-weight:800;line-height:1.25">${insp ? 'ภาพรวมงานตรวจรับ' : 'งานที่ต้องแก้ไข'}</div></div>
+      ${insp && S.wide ? `<button data-act="goImport" class="bp" style="padding:0 20px;display:flex;align-items:center;gap:8px"><span style="font-size:22px;line-height:1">+</span>นำเข้า Feeder</button>` : ''}</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px">${tiles.map(t => tile(t[0], t[1], t[2], true)).join('')}</div>
+    <div style="font-size:19px;font-weight:700;margin-top:4px">${insp ? 'Feeder ทั้งหมด' : 'Feeder ที่ได้รับมอบหมาย'}</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,340px),1fr));gap:14px">${cards || '<div style="color:#5E5566">ยังไม่มี Feeder</div>'}</div>
+  </div></div>
+  ${insp && !S.wide ? `<div data-noprint style="position:absolute;left:0;right:0;bottom:0;padding:12px 16px 18px;background:#F6F3F8;border-top:1px solid #E3DCE8"><button data-act="goImport" class="bp" style="width:100%;height:56px;border-radius:14px;font-size:18px;display:flex;align-items:center;justify-content:center;gap:8px"><span style="font-size:24px;line-height:1">+</span>นำเข้า Feeder</button></div>` : ''}`;
+}
+
+function vFDash() {
+  const f = curF(), st = fStats(f), n = f.segments.length || 1, cnt = k => st.st.filter(x => x === k).length;
+  const pDeg = Math.round(cnt('pass') / n * 360), dDeg = pDeg + Math.round(cnt('defect') / n * 360);
+  const kmPass = f.segments.reduce((a, x, i) => a + (st.st[i] === 'pass' ? x.length_km : 0), 0), by = k => st.ds.filter(d => d.status === k).length;
+  const acts = [];
+  st.ds.forEach(d => d.events.forEach(h => acts.push({ d, h, t: +new Date(h.at) })));
+  f.segments.forEach(x => { if (x.passed_at) acts.push({ seg: x, t: +new Date(x.passed_at) }); });
+  acts.sort((a, b) => b.t - a.t);
+  const rmax = Math.max(0, ...st.ds.map(d => d.round_no), f.segments.some(x => x.passed_at) ? 1 : 0);
+  const rounds = Array.from({ length: rmax }, (_, i) => { const r = i + 1, c = { created: 0, passed: 0, rejected: 0 }; st.ds.forEach(d => d.events.forEach(h => { if (h.round_no === r && h.kind in c) c[h.kind]++; })); return [r, c]; });
+  const tmax = Math.max(1, ...TYPES.map(t => st.ds.filter(d => d.issue_type === t).length));
+  const ico = (c, g, sh, z) => `<span class="ico" style="width:${z}px;height:${z}px;border-radius:${sh};background:${c};font-size:13px">${g}</span>`;
+  const STK = ['open', 'rejected', 'submitted', 'passed'];
+  const actRow = (act, arg, c, g, sh, title, sub) => `<button data-act="${act}" data-arg="${esc(arg)}" style="display:flex;gap:10px;align-items:flex-start;text-align:left;padding:8px 0;border:0;border-top:1px solid #ECE6EF;background:transparent">${ico(c, g, sh, 26)}<span style="flex:1;min-width:0"><span style="display:block;font-size:15px;font-weight:700;color:#1C1324">${esc(title)}</span><span style="display:block;font-size:13px;color:#5E5566">${esc(sub)}</span></span></button>`;
+  return `<div data-scroll="fdash" class="scroll"><div style="max-width:1200px;margin:0 auto;padding:20px 16px 40px;display:flex;flex-direction:column;gap:16px">
+    <div style="display:flex;gap:12px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap"><div style="min-width:0">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><span class="mono" style="font-weight:700;font-size:26px;color:${P};line-height:1.2">${esc(f.code)}</span>${pill(FEED[st.status], ';font-size:14px;font-weight:800;padding:4px 12px')}</div>
+      <div style="font-size:20px;font-weight:800">${esc(f.line)}</div><div style="font-size:15px;color:#5E5566">${esc(f.contractor)} · นำเข้า ${fmtDay(f.imported_at)}</div></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap"><button data-act="openFeeder" data-arg="${esc(f.id)}" class="bp" style="padding:0 18px">เปิดแผนที่</button>${isInsp() ? `<button data-act="report" data-arg="${esc(f.id)}" class="bo" style="padding:0 18px">รายงานสรุป</button>` : ''}</div></div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:14px">
+      <div class="card" style="padding:18px;flex-direction:row;gap:18px;align-items:center">
+        <div style="flex:none;position:relative;width:120px;height:120px;border-radius:50%;background:conic-gradient(#2E7D32 0 ${pDeg}deg,#C62828 ${pDeg}deg ${dDeg}deg,#CFC8D4 ${dDeg}deg 360deg)">
+          <div style="position:absolute;inset:14px;border-radius:50%;background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center"><div style="font-size:30px;font-weight:800;line-height:1">${st.pct}%</div><div style="font-size:13px;color:#5E5566">ช่วงที่ผ่าน</div></div></div>
+        <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:8px"><div style="font-size:16px;font-weight:800">ความคืบหน้าการตรวจรับ</div>
+          ${[['#2E7D32', 'ผ่าน', cnt('pass')], ['#C62828', 'มีจุดบกพร่องค้าง', cnt('defect')], ['#CFC8D4', 'ยังไม่ตรวจ', cnt('none')]].map(([c, l, v]) => `<div style="display:flex;align-items:center;gap:8px;font-size:15px"><span style="flex:none;width:14px;height:14px;border-radius:3px;background:${c}"></span><span style="flex:1">${l}</span><b>${v} ช่วง</b></div>`).join('')}</div></div>
+      <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px">${tile(kmPass.toFixed(2) + '/' + st.km.toFixed(2), 'ระยะทางที่ผ่าน (กม.)', '#1B5E20')}${tile(st.trees, 'จำนวนต้นตามแผน')}${tile(st.out, 'จุดค้างแก้ไข', st.out ? '#C62828' : '#5E5566')}${tile(st.rev, 'รอตรวจซ้ำ', st.rev ? '#B85C00' : '#5E5566')}</div>
+    </div>
+    <div class="card"><div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:baseline"><div style="font-size:17px;font-weight:800">สถานะรายช่วงตามแนวสาย</div><div style="font-size:14px;color:#5E5566">ความกว้างตามความยาวช่วง · แตะเพื่อเปิดบนแผนที่</div></div>
+      <div style="display:flex;gap:3px;min-height:64px">${f.segments.map((x, i) => { const k = st.st[i], c = SEG[k]; return `<button data-act="segOnMap" data-arg="${x.seq}" title="ช่วงที่ ${x.seq} · ${x.length_km.toFixed(2)} กม. · ${c.label}" style="flex:${x.length_km.toFixed(3)} 1 0;min-width:30px;border:0;border-radius:6px;background:${{ none: '#EEEAF0', defect: '#C62828', pass: '#2E7D32' }[k]};color:${k === 'none' ? '#3F3846' : '#fff'};display:flex;flex-direction:column;align-items:center;justify-content:center;padding:6px 2px;background-image:${k === 'none' ? 'repeating-linear-gradient(135deg,transparent 0 6px,rgba(0,0,0,.06) 6px 12px)' : 'none'}"><span style="font-size:16px;font-weight:800;line-height:1.1">${x.seq}</span><span style="font-size:12px;font-weight:700">${c.glyph}</span></button>`; }).join('')}</div>
+      <div style="display:flex;justify-content:space-between;font-size:13px;color:#5E5566"><span>ต้นสาย</span><span>รวม ${st.km.toFixed(2)} กม. · ${f.segments.length} ช่วง</span></div></div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr));gap:14px;align-items:start">
+      <div class="card"><div style="font-size:17px;font-weight:800">จุดบกพร่องตามสถานะ <span class="sub">· ${st.ds.length} จุด</span></div>
+        <div style="display:flex;height:16px;border-radius:5px;overflow:hidden;background:#EFEAF2">${STK.map(k => `<div style="flex:${by(k)} 1 0;background:${DEF[k].solid}"></div>`).join('')}</div>
+        ${STK.map(k => `<div style="display:flex;align-items:center;gap:10px;font-size:15px">${ico(DEF[k].solid, DEF[k].glyph, DEF[k].shape, 24)}<span style="flex:1">${DEF[k].label}</span><b>${by(k)}</b></div>`).join('')}</div>
+      <div class="card" style="gap:10px"><div style="font-size:17px;font-weight:800">จุดบกพร่องตามประเภท</div>
+        ${TYPES.map(t => { const c = st.ds.filter(d => d.issue_type === t).length; return `<div style="display:grid;grid-template-columns:minmax(110px,170px) minmax(0,1fr) 28px;gap:10px;align-items:center;font-size:15px"><span>${t}</span><div style="height:14px;border-radius:4px;background:#EFEAF2;overflow:hidden"><div style="height:100%;width:${Math.round(c / tmax * 100)}%;background:${P}"></div></div><b style="text-align:right">${c}</b></div>`; }).join('')}</div>
+      <div class="card" style="gap:10px"><div style="font-size:17px;font-weight:800">ผลตรวจแต่ละรอบ</div>
+        <div style="display:grid;grid-template-columns:80px repeat(3,minmax(0,1fr));gap:6px;font-size:13px;font-weight:800;color:#5E5566"><span>รอบ</span><span>พบใหม่</span><span>ผ่าน</span><span>ไม่ผ่าน</span></div>
+        ${rounds.map(([r, c]) => `<div style="display:grid;grid-template-columns:80px repeat(3,minmax(0,1fr));gap:6px;font-size:15px;align-items:center;padding:6px 0;border-top:1px solid #ECE6EF"><b>ครั้งที่ ${r}</b><span style="color:#8E1B1B;font-weight:700">${c.created}</span><span style="color:#1B5E20;font-weight:700">${c.passed}</span><span style="color:#6B1414;font-weight:700">${c.rejected}</span></div>`).join('')}
+        ${rounds.length ? '' : '<div style="font-size:15px;color:#5E5566">ยังไม่มีการตรวจ</div>'}</div>
+      <div class="card" style="gap:4px"><div style="font-size:17px;font-weight:800;margin-bottom:6px">ความเคลื่อนไหวล่าสุด</div>
+        ${acts.slice(0, 6).map(a => { if (a.seg) return actRow('segOnMap', a.seg.seq, '#2E7D32', '✓', '4px', 'ช่วงที่ ' + a.seg.seq + ' ผ่านทั้งช่วง', fmtDay(a.seg.passed_at));
+          const e = EV[a.h.kind]; return actRow('defOnMap', a.d.id, e[0], e[1], e[2], e[4] + ' · ' + a.d.code, 'ช่วงที่ ' + a.d.seq + ' · ' + a.d.issue_type + ' · ' + fmtAt(a.h.at)); }).join('')}
+        ${acts.length ? '' : '<div style="font-size:15px;color:#5E5566">ยังไม่มีความเคลื่อนไหว</div>'}</div>
+    </div></div></div>`;
+}
+
+// ส่วนที่ preview ต้องใช้ร่วมกันระหว่าง body กับ footer
+function impCalc() {
+  const im = S.imp, code = im.code.trim().toUpperCase(), ex = byCode(code), have = new Set(ex ? ex.segments.map(x => x.seq) : []);
+  const dup = n => !!ex && im.mode === 'append' && have.has(n);
+  return { code, ex, dup, used: im.segs.filter(x => !dup(x.seq)) };
+}
+function vImport() {
+  const im = S.imp, prev = im.step === 'preview';
+  const steps = [['1. เลือกโฟลเดอร์', true], ['2. ตรวจสอบและยืนยัน', prev]].map(([l, on]) => `<div style="display:flex;flex-direction:column;gap:6px"><div style="height:6px;border-radius:3px;background:${on ? P : '#DDD5E2'}"></div><div style="font-size:14px;font-weight:700;color:${on ? P : '#5E5566'}">${l}</div></div>`).join('');
+  const smallPick = (accept, label, multi) => `<label style="height:52px;border:1.5px solid ${P};border-radius:12px;background:#fff;color:${P};font-size:15px;font-weight:700;display:flex;align-items:center;justify-content:center;cursor:pointer;text-align:center"><input type="file" accept="${accept}" ${multi ? 'multiple' : ''} data-file="impPick" style="display:none">${label}</label>`;
+  const mono = t => `<span class="mono" style="font-size:14px;color:${P}">${t}</span>`;
+  const sample = (k, pre, name, post) => `<button data-act="impSample" data-arg="${k}" style="min-height:52px;padding:8px 14px;border:1.5px dashed #8E72A3;border-radius:12px;background:#fff;color:#1C1324;font-size:15px;font-weight:600;text-align:left">${pre} · <b class="mono">${name}</b> ${post}</button>`;
+  let body, foot = '';
+  if (!prev) body = `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr));gap:16px;align-items:start">
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <label style="display:flex;flex-direction:column;align-items:center;gap:12px;padding:36px 20px;border:2px dashed #8E72A3;border-radius:16px;background:#fff;cursor:pointer;text-align:center">
+        <input type="file" webkitdirectory directory multiple data-file="impPick" style="display:none">${FOLDER(56, 1.6)}
+        <div style="font-size:20px;font-weight:800">เลือกโฟลเดอร์ Feeder</div>
+        <div style="font-size:15px;color:#5E5566;max-width:420px;text-wrap:pretty">1 โฟลเดอร์ = 1 Feeder · ระบบอ่านชื่อโฟลเดอร์เป็นรหัส Feeder + ชื่อสาย และอ่าน KMZ ทุกไฟล์เป็นช่วงงานตัด</div>
+        <span style="height:48px;padding:0 24px;border-radius:12px;background:${P};color:#fff;font-size:16px;font-weight:700;display:flex;align-items:center">เลือกโฟลเดอร์</span></label>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">${smallPick('.kmz,.kml', 'เลือกหลายไฟล์ KMZ', true)}${smallPick('.zip', 'เลือกไฟล์ .zip')}</div>
+      ${im.loading ? `<div style="padding:12px 14px;border-radius:12px;background:#F1E7F6;color:#3E0F55;font-size:15px;font-weight:700">กำลังอ่านไฟล์ KMZ…</div>` : ''}
+      ${im.error ? `<div style="padding:12px 14px;border-radius:12px;background:#FDE7E7;color:#8E1B1B;font-size:15px;font-weight:700">${esc(im.error)}</div>` : ''}
+    </div>
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <div class="card" style="gap:10px"><div style="font-weight:800">โครงสร้างโฟลเดอร์ที่รองรับ</div>
+        <div class="mono" style="font-size:14px;line-height:1.7;background:#F6F3F8;border-radius:10px;padding:12px 14px;overflow-x:auto;white-space:pre">▾ MDA03R-04 ไลน์เหล่าสร้างถ่อ
+   1.kmz   → ช่วงที่ 1
+   2.kmz   → ช่วงที่ 2
+   3.kmz   → ช่วงที่ 3 …</div>
+        <div style="display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:15px">${mono('MDA03R-04')}<span>→ รหัส Feeder</span>${mono('ไลน์…')}<span>→ ชื่อสาย (แก้ไขได้ก่อนยืนยัน)</span>${mono('LineString')}<span>→ เส้นช่วงงานตัด, ความยาว กม.</span>${mono('description')}<span>→ แรงดัน, จำนวนต้น, ความหนาแน่น</span></div></div>
+      ${LIVE ? '' : `<div style="display:flex;flex-direction:column;gap:8px"><div style="font-size:14px;font-weight:700;color:#5E5566">ทดลองด้วยข้อมูลตัวอย่าง</div>
+        ${sample('new', 'โฟลเดอร์ใหม่', 'MDA05R-02 ไลน์นาโพธิ์กลาง', '(7 ไฟล์ มี 1 ไฟล์เสีย)')}${sample('dup', 'Feeder ที่มีอยู่แล้ว', 'MDA03R-04 ไลน์เหล่าสร้างถ่อ', '(4 ไฟล์)')}</div>`}
+    </div></div>`;
+  else {
+    const { code, ex, dup, used } = impCalc();
+    const km = used.reduce((a, x) => a + x.length_km, 0), tr = used.reduce((a, x) => a + (x.plan_trees || 0), 0), pr = used.reduce((a, x) => a + (x.price_trees || 0), 0);
+    const COLS = 'grid-template-columns:64px 130px 110px minmax(170px,1fr) 110px 100px 140px';
+    const mode = (k, title, sub) => { const on = im.mode === k; return `<button data-act="impMode" data-arg="${k}" style="display:flex;align-items:center;gap:12px;text-align:left;min-height:60px;padding:10px 14px;border-radius:12px;border:2px solid ${on ? P : '#DDD5E2'};background:#fff"><span style="flex:none;width:22px;height:22px;border-radius:50%;border:2px solid ${on ? P : '#9A8FA3'};display:flex;align-items:center;justify-content:center"><span style="width:10px;height:10px;border-radius:50%;background:${on ? P : 'transparent'}"></span></span><span style="flex:1;min-width:0"><span style="display:block;font-size:16px;font-weight:700;color:#1C1324">${title}</span><span style="display:block;font-size:14px;color:#5E5566">${sub}</span></span></button>`; };
+    const lab = t => `<span style="font-size:14px;font-weight:700;color:#4A3F52">${t}</span>`;
+    body = `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:16px;align-items:start">
+      <div style="display:flex;flex-direction:column;gap:14px">
+        <div class="card"><div style="display:flex;align-items:center;gap:10px">${FOLDER(28, 1.8)}<div style="flex:1;min-width:0"><div style="font-size:13px;color:#5E5566">โฟลเดอร์ที่เลือก</div><div style="font-weight:700;overflow-wrap:anywhere">${esc(im.folder)}</div></div><span class="pill" style="flex:none;padding:3px 10px;background:#E3F2E4;color:#1B5E20">อ่านชื่ออัตโนมัติ</span></div>
+          <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.4fr);gap:10px">
+            <label class="lbl" style="min-width:0">${lab('รหัส Feeder')}<input class="inp mono" data-in="imp.code" data-rr value="${esc(im.code)}" style="height:50px;padding:0 12px;font-weight:700;color:${P}"></label>
+            <label class="lbl" style="min-width:0">${lab('ชื่อสาย')}<input class="inp" data-in="imp.line" value="${esc(im.line)}" placeholder="เช่น ไลน์เหล่าสร้างถ่อ" style="height:50px;padding:0 12px"></label></div>
+          <label class="lbl">${lab('ผู้รับจ้าง <span class="sub">· กำหนดสิทธิ์การเห็นข้อมูล</span>')}<select class="inp" data-in="imp.contractor" style="height:50px;padding:0 10px;font-size:16px">${contractorsOf(S.me.office).map(o => `<option value="${esc(o.id)}"${o.id === im.contractor ? ' selected' : ''}>${esc(o.company || o.full_name)}</option>`).join('') || '<option value="">— ยังไม่มีผู้รับจ้างในระบบ —</option>'}</select></label></div>
+        ${ex ? `<div style="background:#FFEFD6;border:1.5px solid #E87500;border-radius:14px;padding:14px;display:flex;flex-direction:column;gap:10px"><div style="font-weight:800;color:#7A3B00">Feeder ${esc(code)} มีอยู่แล้วในระบบ</div><div style="font-size:15px;color:#5C2D00">ปัจจุบันมี ${ex.segments.length} ช่วง และจุดบกพร่อง ${dOf(ex.id).length} จุด — ต้องการนำเข้าแบบใด?</div>
+          ${mode('append', 'เพิ่มช่วงใหม่', 'เก็บช่วงและผลตรวจเดิมไว้ ช่วงที่ลำดับซ้ำจะถูกข้าม')}${mode('replace', 'แทนที่ทั้งหมด', 'ลบช่วงและจุดบกพร่องเดิมของ Feeder นี้ทั้งหมด')}</div>` : ''}
+        ${im.bad.length ? `<div style="background:#FDE7E7;border-radius:12px;padding:12px 14px;display:flex;gap:10px;color:#8E1B1B;font-size:15px"><b class="ico" style="width:22px;height:22px;border-radius:50%;background:#C62828;font-size:13px">!</b><div><b>อ่านไม่ได้ ${im.bad.length} ไฟล์ — จะถูกข้าม</b><div>${esc(im.bad.join(', '))}</div></div></div>` : ''}
+        <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px">${tile(used.length, 'ช่วงงานตัด', P)}${tile(km.toFixed(2), 'ระยะทาง (กม.)', P)}${tile(tr, 'ต้น (แผน)', P)}</div>
+      </div>
+      <div style="position:relative;height:340px;border-radius:14px;overflow:hidden;border:1px solid #E3DCE8;background:#E8E4EA"><div data-slot="mini"></div><div style="position:absolute;left:10px;top:10px;z-index:1000;padding:4px 10px;border-radius:8px;background:rgba(255,255,255,.95);font-size:13px;font-weight:700">พรีวิวเส้นช่วงงานตัด</div></div>
+    </div>
+    <div style="background:#fff;border:1px solid #E3DCE8;border-radius:14px;overflow:hidden"><div style="overflow-x:auto"><div style="min-width:760px">
+      <div style="display:grid;${COLS};gap:8px;padding:10px 14px;background:#F1E7F6;font-size:13px;font-weight:800;color:#3E0F55"><span>ช่วง</span><span>แรงดัน</span><span>ต้น (แผน)</span><span>ความหนาแน่น</span><span>ต้นราคากลาง</span><span>ยาว (กม.)</span><span>ไฟล์</span></div>
+      ${im.segs.map(x => { const d = dup(x.seq); return `<div class="row" style="${COLS};background:${d ? '#F6F3F8' : '#fff'};color:${d ? '#8A8090' : '#1C1324'}"><b>${x.seq}</b><span>${esc(dash(x.voltage))}</span><span>${dash(x.plan_trees)}</span><span>${d ? 'ลำดับซ้ำกับช่วงเดิม — ข้าม' : esc(densText(x))}</span><span>${dash(x.price_trees)}</span><span>${x.length_km.toFixed(2)}</span><span class="mono" style="font-size:13px">${esc(x.source_file)}</span></div>`; }).join('')}
+      <div style="display:grid;${COLS};gap:8px;padding:12px 14px;border-top:2px solid ${P};font-size:15px;font-weight:800"><span>รวม</span><span>${used.length} ช่วง</span><span>${tr}</span><span></span><span>${pr || '–'}</span><span>${km.toFixed(2)}</span><span></span></div>
+    </div></div></div>`;
+    const label = ex ? (im.mode === 'append' ? 'เพิ่ม ' + used.length + ' ช่วงเข้า ' + code : 'แทนที่ ' + code + ' ด้วย ' + im.segs.length + ' ช่วง') : 'ยืนยันนำเข้า ' + used.length + ' ช่วง';
+    foot = `<div data-noprint style="position:absolute;left:0;right:0;bottom:0;padding:12px 16px 16px;background:#fff;border-top:1px solid #E3DCE8;z-index:1001"><div style="max-width:1100px;margin:0 auto;display:flex;flex-direction:column;gap:8px">
+      ${im.err ? `<div style="font-size:15px;font-weight:700;color:#B3261E">${esc(im.err)}</div>` : ''}
+      <div style="display:grid;grid-template-columns:1fr 2fr;gap:10px"><button data-act="impReset" class="bo" style="height:56px">เลือกใหม่</button><button data-act="impConfirm" class="bp" style="height:56px;font-size:17px;font-weight:800">${esc(label)}</button></div></div></div>`;
+  }
+  return `<div data-scroll="import" class="scroll"><div style="max-width:1100px;margin:0 auto;padding:20px 16px 120px;display:flex;flex-direction:column;gap:18px">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;max-width:520px">${steps}</div>${body}</div></div>${foot}`;
+}
+
+// ── feeder screen ──
+function itemOf(x) {
+  const insp = isInsp(), k = DEF[x.status], last = x.events[x.events.length-1], rej = [...x.events].reverse().find(h => h.kind === 'rejected');
+  let hint = '';
+  if (x.status === 'rejected' && rej) hint = 'เหตุผล: ' + rej.note;
+  else if (x.status === 'submitted' && insp) hint = 'ผู้รับจ้างส่งแก้แล้ว ' + fmtAt(last.at);
+  return { x, k, hint, pending: x.events.some(h => h.pending), fresh: insp && S.fresh.has(x.id), rowBg: insp && S.fresh.has(x.id) ? '#FFF6E8' : '#fff' };
+}
+const defIco = (k, z, fs) => `<div class="ico" style="width:${z}px;height:${z}px;border-radius:${k.shape};background:${k.solid};font-size:${fs}px">${k.glyph}</div>`;
+const doneBox = (bg, fg, t) => `<div style="height:48px;border-radius:10px;background:${bg};color:${fg};font-size:15px;font-weight:700;display:flex;align-items:center;justify-content:center">${t}</div>`;
+function vListItem(it) {
+  const { x, k } = it;
+  return `<div style="border-top:1px solid #ECE6EF;padding:12px 14px;background:${it.rowBg};display:flex;flex-direction:column;gap:10px">
+    <div data-act="openDefect" data-arg="${esc(x.id)}" style="display:flex;gap:12px;align-items:flex-start;cursor:pointer">${defIco(k, 36, 17)}
+      <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="mono" style="font-size:13px;font-weight:600;color:#4A3F52">${esc(x.code)}</span>
+          ${it.pending ? '<span style="padding:1px 8px;border-radius:6px;background:#2B2230;color:#FFE082;font-size:12px;font-weight:700">รอส่ง</span>' : ''}
+          ${it.fresh ? '<span style="padding:1px 8px;border-radius:6px;background:#E87500;color:#fff;font-size:12px;font-weight:700">ใหม่</span>' : ''}</div>
+        <div style="font-size:16px;font-weight:700;line-height:1.3">${esc(x.issue_type)}</div>
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:14px;color:#5E5566"><span style="font-weight:700;color:${k.fg}">${k.label}</span><span>· ${fmtDist(distTo(x.lat, x.lng))}</span><span>· ตรวจครั้งที่ ${x.round_no}</span></div>
+        ${it.hint ? `<div style="font-size:14px;font-weight:600;color:#6B1414">${esc(it.hint)}</div>` : ''}</div></div>
+    ${isInsp() ? '' : `<div style="display:grid;grid-template-columns:1fr 1.5fr;gap:8px"><button data-act="nav" data-arg="${x.lat},${x.lng}" class="bnav" style="border-radius:10px">นำทาง</button>
+      ${x.status === 'open' || x.status === 'rejected' ? `<button data-act="startFix" data-arg="${esc(x.id)}" class="bp" style="border-radius:10px">ส่งหลักฐานการแก้ไข</button>` : ''}
+      ${x.status === 'submitted' ? doneBox('#FFEFD6', '#7A3B00', 'ส่งแล้ว · รอตรวจ') : ''}${x.status === 'passed' ? doneBox('#E3F2E4', '#1B5E20', '✓ ผ่านแล้ว') : ''}</div>`}
+  </div>`;
+}
+function segView(f) {
+  const x = f.segments.find(y => y.seq === S.panel.seq) || f.segments[0], sst = segSt(f, x), ds = dOf(f.id, x.seq), out = ds.filter(y => y.status !== 'passed').length, passed = sst === 'pass';
+  return { x, st: SEG[sst], ds, out, passed, dis: out > 0 || passed, summary: ds.length ? ds.length + ' จุดบกพร่อง · ค้าง ' + out : 'ยังไม่มีจุดบกพร่อง',
+    short: dash(x.voltage) + ' · ' + dash(x.plan_trees) + ' ต้น · ' + densText(x) };
+}
+const passBtn = (v, h) => `<button data-act="passSeg" data-arg="${v.x.seq}" ${v.dis ? 'disabled' : ''} style="height:${h}px;border:2px solid ${v.dis ? '#C9C2CE' : '#2E7D32'};border-radius:12px;background:#fff;color:${v.dis ? '#8A8090' : '#1B5E20'};font-size:${h > 52 ? 16 : 15}px;font-weight:800">✓ ผ่านทั้งช่วง</button>`;
+const pinBtn = (v, h) => `<button data-act="startDefect" data-arg="${v.x.seq}" class="bp" style="height:${h}px;font-size:${h > 52 ? 16 : 15}px;font-weight:800">+ ปักจุดบกพร่อง</button>`;
+
+function vFeeder() {
+  const f = curF(), insp = isInsp(), st = fStats(f), mode = S.panel.mode, wide = S.wide, listOn = S.view === 'list';
+  const sv = mode === 'segment' ? segView(f) : null;
+  const dDef = mode === 'defect' ? S.defects.find(y => y.id === S.panel.id) : null;
+  // ── คอลัมน์แผนที่ ──
+  const L1 = (txt, sw) => `<div style="display:flex;align-items:center;gap:8px">${sw}${txt}</div>`, sq = (c, g, r, fs) => `<span class="ico" style="width:18px;height:18px;border-radius:${r};background:${c};font-size:${fs}px">${g}</span>`;
+  const legend = S.legend ? `<div style="background:rgba(255,255,255,.97);border-radius:10px;box-shadow:0 2px 8px rgba(28,19,36,.2);padding:10px 12px;display:flex;flex-direction:column;gap:5px;font-size:13px;font-weight:600">
+    <div style="font-size:12px;font-weight:800;color:#5E5566">ช่วงงานตัด (เส้น)</div>
+    ${L1('ยังไม่ตรวจ', '<span style="width:26px;height:0;border-top:5px dashed #6B6472"></span>')}${L1('มีจุดบกพร่องค้าง', '<span style="width:26px;height:5px;background:#C62828;border-radius:2px"></span>')}${L1('ผ่าน', '<span style="width:26px;height:5px;background:#2E7D32;border-radius:2px"></span>')}
+    <div style="font-size:12px;font-weight:800;color:#5E5566;margin-top:4px">จุดบกพร่อง (หมุด)</div>
+    ${L1('รอแก้ไข', sq('#C62828', '!', '50%', 11))}${L1('รอตรวจ', sq('#E87500', '⧗', '5px', 10))}${L1('ไม่ผ่าน ส่งกลับ', sq('#7F1D1D', '✕', '2px', 11))}${L1('ผ่าน', sq('#2E7D32', '✓', '50%', 11))}
+    ${L1('ตำแหน่งของฉัน', '<span style="width:14px;height:14px;margin:0 2px;border-radius:50%;background:#1565C0;border:2px solid #fff;box-shadow:0 0 0 3px rgba(21,101,192,.3)"></span>')}</div>` : '';
+  const mapBtn = 'width:48px;height:48px;border:0;border-radius:12px;background:#fff;box-shadow:0 2px 8px rgba(28,19,36,.22);display:flex;align-items:center;justify-content:center';
+  const showFab = insp && !S.sheet && !f.closed_at && (wide || mode !== 'segment'), showPeek = !wide && !listOn && mode === 'segment' && !S.sheet;
+  const mapCol = `<div style="position:relative;min-height:0;display:${wide || !listOn ? 'block' : 'none'}"><div data-slot="map"></div>
+    <div style="position:absolute;top:10px;left:10px;z-index:1001;display:flex;flex-direction:column;gap:6px;align-items:flex-start">
+      <button data-act="toggleLegend" style="height:40px;padding:0 12px;border:0;border-radius:10px;background:#fff;color:#1C1324;font-size:14px;font-weight:700;box-shadow:0 2px 8px rgba(28,19,36,.2)">สัญลักษณ์ ${S.legend ? '▴' : '▾'}</button>${legend}</div>
+    <div style="position:absolute;top:10px;right:10px;z-index:1001;display:flex;flex-direction:column;gap:8px">
+      <button data-act="locate" aria-label="ไปยังตำแหน่งของฉัน" style="${mapBtn};color:#1565C0"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2.5" fill="currentColor"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg></button>
+      <button data-act="toggleBase" style="${mapBtn};color:#1C1324;font-size:12px;font-weight:800;line-height:1.1">${S.base === 'sat' ? 'แผนที่' : 'ดาวเทียม'}</button></div>
+    ${showFab ? `<button data-noprint data-act="startDefect" data-arg="" style="position:absolute;z-index:1001;left:50%;bottom:22px;transform:translateX(-50%);width:min(calc(100% - 32px),380px);height:60px;border:0;border-radius:16px;background:${P};color:#fff;font-size:18px;font-weight:800;box-shadow:0 6px 18px rgba(59,15,80,.4);display:flex;align-items:center;justify-content:center;gap:10px"><span style="width:28px;height:28px;border-radius:50%;background:#fff;color:${P};font-size:22px;line-height:1;display:flex;align-items:center;justify-content:center">+</span>ปักจุดบกพร่องที่นี่</button>` : ''}
+    ${showPeek ? `<div data-noprint style="position:absolute;z-index:1001;left:10px;right:10px;bottom:12px;background:#fff;border-radius:16px;box-shadow:0 6px 24px rgba(28,19,36,.3);padding:14px;display:flex;flex-direction:column;gap:12px">
+      <div style="display:flex;gap:12px;align-items:flex-start"><div style="flex:none;width:44px;height:44px;border-radius:10px;border:3px solid ${sv.st.solid};display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:800">${sv.x.seq}</div>
+        <div style="flex:1;min-width:0"><div style="font-size:18px;font-weight:800;line-height:1.25">ช่วงที่ ${sv.x.seq} · ${sv.x.length_km.toFixed(2)} กม.</div><div style="font-size:14px;color:#5E5566">${esc(sv.short)}</div></div>
+        <button data-act="clearSeg" aria-label="ปิด" style="flex:none;width:44px;height:44px;border:0;border-radius:22px;background:#F6F3F8;font-size:18px;color:#1C1324">✕</button></div>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">${pill(sv.st, ';font-size:14px;font-weight:800;padding:3px 10px')}<span style="font-size:14px;color:#4A3F52">${sv.summary}</span></div>
+      ${insp ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">${passBtn(sv, 52)}${pinBtn(sv, 52)}</div>` : ''}
+      <button data-act="viewList" style="height:44px;border:0;background:transparent;color:${P};font-size:15px;font-weight:700;text-decoration:underline">ดูรายละเอียดช่วงและจุดบกพร่อง ›</button></div>` : ''}
+  </div>`;
+  // ── แผงขวา: รายการ / ช่วง / จุด ──
+  let panel = '';
+  const backHead = (label, title, sub, badge) => `<div style="flex:none;display:flex;align-items:center;gap:8px;padding:8px 12px 8px 4px;border-bottom:1px solid #ECE6EF"><button data-act="panelBack" aria-label="${label}" style="flex:none;width:48px;height:48px;border:0;border-radius:24px;background:transparent;color:${P};font-size:32px;line-height:1">‹</button><div style="flex:1;min-width:0">${title}<div style="font-size:13px;color:#5E5566">${esc(sub)}</div></div>${badge}</div>`;
+  const footBox = inner => `<div data-noprint style="flex:none;padding:12px 16px 16px;border-top:1px solid #ECE6EF;display:flex;flex-direction:column;gap:8px">${inner}</div>`;
+  if (mode === 'segment') {
+    const x = sv.x, mid = along(x.coords, .5);
+    panel = backHead('กลับไปรายการ', `<div style="font-size:18px;font-weight:800">ช่วงที่ ${x.seq}</div>`, f.code + ' · ' + f.line, pill(sv.st, ';flex:none;padding:5px 12px;font-size:14px;font-weight:800')) +
+      `<div data-scroll="seg" style="flex:1;min-height:0;overflow:auto;padding:16px;display:grid;align-content:start;gap:18px">
+        <div class="facts">${fact('แรงดัน', dash(x.voltage))}${fact('ความยาวช่วง', x.length_km.toFixed(2) + ' กม.')}${fact('ต้นที่สำรวจจัดทำแผน', x.plan_trees == null ? '–' : x.plan_trees + ' ต้น')}${fact('ความหนาแน่น', densText(x))}${fact('ต้นสำรวจราคากลาง', x.price_trees == null ? '–' : x.price_trees + ' ต้น')}${fact('ไฟล์ต้นทาง', x.source_file)}${fact('วันที่ผ่าน', segPassAt(f, x) + (x.pending ? ' (รอส่ง)' : ''))}${fact('ระยะจากคุณ', fmtDist(segDist(x)))}</div>
+        <div style="display:flex;flex-direction:column;gap:8px"><div style="font-size:16px;font-weight:800">จุดบกพร่องในช่วงนี้ (${sv.ds.length})</div>
+          ${sv.ds.map(itemOf).map(it => `<div data-act="openDefect" data-arg="${esc(it.x.id)}" style="display:flex;gap:12px;align-items:center;padding:12px;border:1px solid #E3DCE8;border-radius:12px;cursor:pointer;background:${it.rowBg}">${defIco(it.k, 36, 17)}<div style="flex:1;min-width:0"><div style="font-size:16px;font-weight:700">${esc(it.x.issue_type)}</div><div style="font-size:14px;color:#5E5566"><span class="mono">${esc(it.x.code)}</span> · <b style="color:${it.k.fg}">${it.k.label}</b> · ตรวจครั้งที่ ${it.x.round_no}</div></div><span style="flex:none;font-size:24px;color:#9A8FA3">›</span></div>`).join('')}
+          ${sv.ds.length ? '' : '<div style="padding:16px;border:2px dashed #DDD5E2;border-radius:12px;text-align:center;color:#5E5566;font-size:15px">ยังไม่มีจุดบกพร่องในช่วงนี้</div>'}</div></div>` +
+      footBox((insp ? (sv.out > 0 || sv.passed ? `<div style="font-size:14px;font-weight:700;color:${sv.passed ? '#1B5E20' : '#8E1B1B'};text-align:center">${sv.passed ? '✓ ช่วงนี้ผ่านแล้ว' : 'ยังมีจุดบกพร่องค้าง ' + sv.out + ' จุด — ผ่านทั้งช่วงไม่ได้'}</div>` : '') + `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">${passBtn(sv, 56)}${pinBtn(sv, 56)}</div>` : '') +
+        `<button data-act="nav" data-arg="${mid[0]},${mid[1]}" class="bnav">นำทางไปช่วงนี้ · ${fmtDist(segDist(x))}</button>`);
+  } else if (dDef) {
+    const x = dDef, k = DEF[x.status], found = x.events[0], fixes = x.events.filter(h => h.kind === 'fix_submitted'), lastFix = fixes[fixes.length-1];
+    const hasAfter = !!(lastFix && lastFix.photos.length);
+    let info = '', infoFg = '#1C1324';
+    if (insp && (x.status === 'open' || x.status === 'rejected')) { info = 'รอผู้รับจ้างแก้ไข'; infoFg = '#8E1B1B'; }
+    if (!insp && x.status === 'submitted') { info = 'ส่งแล้ว · รอผู้ตรวจตรวจซ้ำ'; infoFg = '#7A3B00'; }
+    if (x.status === 'passed') { info = '✓ ผ่านแล้ว · ปิดจุดนี้'; infoFg = '#1B5E20'; }
+    const big = (ph, cls) => `<div class="ph ${cls}" style="aspect-ratio:3/4">${ph.url ? `<i style="background-image:url('${ph.url}')"></i>` : ''}<span style="left:6px;right:6px;bottom:6px;font-size:12px;padding:2px 6px;border-radius:4px">${esc(ph.label)}</span></div>`;
+    const tl = x.events.map((h, i) => { const e = EV[h.kind]; return `<div style="display:grid;grid-template-columns:32px minmax(0,1fr);gap:12px">
+        <div style="display:flex;flex-direction:column;align-items:center"><div class="ico" style="width:30px;height:30px;border-radius:${e[2]};background:${e[0]};font-size:14px">${e[1]}</div><div style="flex:1;width:2px;background:#DDD5E2;margin-top:4px;display:${i < x.events.length - 1 ? 'block' : 'none'}"></div></div>
+        <div style="padding-bottom:20px;display:flex;flex-direction:column;gap:6px;min-width:0"><div style="font-weight:800;font-size:16px;line-height:1.3">${e[3](h.round_no)}</div><div style="font-size:14px;color:#5E5566">${esc(h.who)} · ${fmtAt(h.at)}</div>
+          ${h.pending ? '<span style="align-self:flex-start;padding:1px 8px;border-radius:6px;background:#2B2230;color:#FFE082;font-size:12px;font-weight:700">บันทึกในเครื่อง · รอส่ง</span>' : ''}
+          ${h.note ? `<div style="font-size:15px;background:#F6F3F8;padding:8px 12px;border-radius:8px">${esc(h.note)}</div>` : ''}
+          ${h.photos.length ? `<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px">${h.photos.map(ph => photo(ph)).join('')}</div>` : ''}</div></div>`; }).join('');
+    panel = backHead('กลับ', `<div class="mono" style="font-weight:700;font-size:16px">${esc(x.code)}</div>`, f.code + ' · ช่วงที่ ' + x.seq,
+        `<span style="flex:none;display:flex;align-items:center;gap:6px;padding:6px 12px;border-radius:999px;background:${k.bg};color:${k.fg};font-size:14px;font-weight:800">${defIco(k, 20, 12)}${k.label}</span>`) +
+      `<div data-scroll="def" style="flex:1;min-height:0;overflow:auto;padding:16px;display:grid;align-content:start;gap:20px">
+        <div style="display:flex;flex-direction:column;gap:10px"><div style="font-size:22px;font-weight:800;line-height:1.25">${esc(x.issue_type)}</div>
+          <div class="facts">${fact('ช่วงงานตัด', 'ช่วงที่ ' + x.seq)}${fact('รอบตรวจล่าสุด', 'ครั้งที่ ' + x.round_no)}${fact('พิกัด', x.lat.toFixed(5) + ', ' + x.lng.toFixed(5))}${fact('ระยะจากคุณ', fmtDist(distTo(x.lat, x.lng)))}</div></div>
+        <div style="display:flex;flex-direction:column;gap:10px"><div style="font-size:17px;font-weight:800">เทียบภาพ ก่อน / หลัง</div>
+          <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px">
+            <div style="display:flex;flex-direction:column;gap:6px;min-width:0"><div style="font-size:14px;font-weight:800;color:#B3261E">ก่อน · ${fmtDay(found.at)}</div>${big(found.photos[0] || { label: 'ไม่มีรูป' }, '')}</div>
+            <div style="display:flex;flex-direction:column;gap:6px;min-width:0"><div style="font-size:14px;font-weight:800;color:#1B5E20">หลัง · ${lastFix ? fmtDay(lastFix.at) : 'รอผู้รับจ้าง'}</div>
+              ${hasAfter ? big(lastFix.photos[0], 'g') : '<div style="aspect-ratio:3/4;border-radius:10px;border:2px dashed #C9BED1;display:flex;align-items:center;justify-content:center;text-align:center;padding:10px;font-size:14px;color:#5E5566">ยังไม่มีรูปหลังแก้ไข</div>'}</div></div></div>
+        <div style="display:flex;flex-direction:column;gap:12px"><div style="font-size:17px;font-weight:800">ประวัติการตรวจ</div><div>${tl}</div></div></div>` +
+      footBox((info ? `<div style="font-size:15px;font-weight:700;color:${infoFg};text-align:center">${info}</div>` : '') +
+        (insp && x.status === 'submitted' ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><button data-act="startReject" style="height:56px;border:2px solid #7F1D1D;border-radius:12px;background:#fff;color:#7F1D1D;font-size:16px;font-weight:800">✕ ไม่ผ่าน ส่งกลับ</button><button data-act="passDefect" style="height:56px;border:0;border-radius:12px;background:#2E7D32;color:#fff;font-size:17px;font-weight:800">✓ ผ่าน</button></div>` : '') +
+        (!insp && (x.status === 'open' || x.status === 'rejected') ? `<button data-act="startFix" data-arg="${esc(x.id)}" class="bp" style="height:56px;font-size:17px;font-weight:800">ส่งหลักฐานการแก้ไข</button>` : '') +
+        `<button data-act="nav" data-arg="${x.lat},${x.lng}" class="bnav">นำทางด้วย Google Maps · ${fmtDist(distTo(x.lat, x.lng))}</button>`);
+  } else {
+    const chipDefs = insp ? [['all', 'ทั้งหมด', () => true], ['open', 'รอแก้ไข', x => x.status === 'open'], ['submitted', 'รอตรวจ', x => x.status === 'submitted'], ['rejected', 'ไม่ผ่าน', x => x.status === 'rejected'], ['passed', 'ผ่าน', x => x.status === 'passed']]
+      : [['todo', 'ต้องแก้', x => x.status === 'open' || x.status === 'rejected'], ['submitted', 'รอตรวจ', x => x.status === 'submitted'], ['passed', 'ผ่าน', x => x.status === 'passed']];
+    const cd = chipDefs.find(c => c[0] === S.chip) || chipDefs[0];
+    const groups = f.segments.map((x, i) => {
+      const ds = dOf(f.id, x.seq).filter(cd[2]).sort((a, b) => (distTo(a.lat, a.lng) ?? 0) - (distTo(b.lat, b.lng) ?? 0)), dist = ds.length ? distTo(ds[0].lat, ds[0].lng) : segDist(x);
+      return { x, st: SEG[st.st[i]], ds, dist, sub: insp ? dash(x.plan_trees) + ' ต้น · ' + (x.density_label || '–') : 'ห่าง ' + fmtDist(dist) + ' · ' + ds.length + ' จุด', show: cd[0] === 'all' || ds.length > 0 };
+    }).filter(g => g.show);
+    if (!insp) groups.sort((a, b) => (a.dist ?? Infinity) - (b.dist ?? Infinity));
+    panel = `<div style="flex:none;padding:14px 16px 12px;border-bottom:1px solid #ECE6EF;display:flex;flex-direction:column;gap:10px">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap"><div style="font-size:18px;font-weight:800">${insp ? 'ช่วงงานตัด ' + f.segments.length + ' ช่วง' : 'จุดที่ต้องแก้ไข'}</div><div style="font-size:14px;color:#5E5566">ผ่าน ${st.passN}/${f.segments.length} ช่วง · ${st.km.toFixed(2)} กม.</div></div>
+        <div style="height:8px;border-radius:4px;background:#EFEAF2;overflow:hidden"><div style="height:100%;width:${st.pct}%;background:#2E7D32"></div></div>
+        ${insp ? '' : '<div style="font-size:14px;color:#3E0F55;background:#F1E7F6;border-radius:10px;padding:8px 12px">จัดกลุ่มตามช่วง เรียงตามระยะทางจากตำแหน่งปัจจุบันของคุณ</div>'}
+        <div style="display:flex;gap:8px;overflow-x:auto;padding-bottom:2px">${chipDefs.map(([k, label, fn]) => chipBtn(k === cd[0], label + ' · ' + (k === 'all' ? f.segments.length + ' ช่วง' : st.ds.filter(fn).length), 'chip', k, CHIP_FILTER)).join('')}</div></div>
+      <div data-scroll="list" style="flex:1;overflow:auto;background:#F6F3F8;padding:10px;display:flex;flex-direction:column;gap:10px">
+        ${groups.map(g => `<div style="flex:none;background:#fff;border:1px solid #E3DCE8;border-radius:12px;overflow:hidden">
+          <div data-act="selectSeg" data-arg="${g.x.seq}" style="display:flex;align-items:center;gap:12px;padding:12px 14px;cursor:pointer;border-left:6px solid ${g.st.solid}">
+            <div style="flex:none;width:40px;height:40px;border-radius:10px;background:#F6F3F8;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:800">${g.x.seq}</div>
+            <div style="flex:1;min-width:0"><div style="font-size:16px;font-weight:800">ช่วงที่ ${g.x.seq} <span class="sub">· ${g.x.length_km.toFixed(2)} กม.</span></div>
+              <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:13px;color:#5E5566"><span style="padding:1px 8px;border-radius:999px;background:${g.st.bg};color:${g.st.fg};font-weight:700">${g.st.glyph} ${g.st.label}</span><span>${esc(g.sub)}</span></div></div>
+            <span style="flex:none;font-size:24px;color:#9A8FA3">›</span></div>
+          ${g.ds.map(itemOf).map(vListItem).join('')}</div>`).join('')}
+        ${groups.length ? '' : `<div style="padding:40px 20px;text-align:center;color:#5E5566;font-size:16px">${insp ? 'ไม่มีจุดบกพร่องในสถานะนี้' : cd[0] === 'todo' ? 'ไม่มีจุดที่ต้องแก้ไข' : 'ไม่มีจุดในสถานะนี้'}</div>`}
+      </div>`;
+  }
+  const tg = on => `background:${on ? '#fff' : 'transparent'};color:${on ? P : '#5E5566'};box-shadow:${on ? '0 1px 3px rgba(0,0,0,.15)' : 'none'}`;
+  return `<div style="flex:1;min-height:0;display:flex;flex-direction:column">
+    ${wide ? '' : `<div data-noprint style="flex:none;padding:8px 12px;background:#fff;border-bottom:1px solid #E3DCE8"><div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;background:#EFEAF2;border-radius:12px;padding:4px">
+      <button data-act="viewMap" style="height:44px;border:0;border-radius:9px;font-size:16px;font-weight:700;${tg(!listOn)}">แผนที่</button><button data-act="viewList" style="height:44px;border:0;border-radius:9px;font-size:16px;font-weight:700;${tg(listOn)}">${insp ? 'รายการ (' + f.segments.length + ' ช่วง)' : 'รายการ (' + st.out + ')'}</button></div></div>`}
+    <div style="flex:1;min-height:0;display:grid;grid-template-columns:${wide ? 'minmax(0,1fr) 440px' : 'minmax(0,1fr)'};grid-template-rows:minmax(0,1fr)">
+      ${mapCol}<div style="min-height:0;display:${wide || listOn ? 'flex' : 'none'};flex-direction:column;background:#fff;border-left:1px solid #E3DCE8">${panel}</div></div></div>`;
+}
+
+function vReport() {
+  const f = curF(), st = fStats(f), canClose = st.allPass && !f.closed_at;
+  const COLS = 'grid-template-columns:50px 110px 70px minmax(150px,1fr) 80px 90px 80px 150px 100px';
+  const t2 = (v, l, fg) => `<div style="border:1px solid #E3DCE8;border-radius:10px;padding:12px 14px"><div style="font-size:26px;font-weight:800;line-height:1.1;color:${fg}">${v}</div><div style="font-size:14px;color:#5E5566">${l}</div></div>`;
+  const sign = (name, role) => `<div style="text-align:center;font-size:15px"><div style="border-bottom:1px dotted #5E5566;height:44px"></div><div style="margin-top:6px">(${esc(name)})</div><div style="color:#5E5566">${role}</div></div>`;
+  return `<div data-scroll="report" class="scroll">
+    <div data-noprint style="max-width:1000px;margin:0 auto;padding:16px 16px 0;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <button data-act="print" class="bp" style="padding:0 18px">พิมพ์ / ส่งออก PDF</button>
+      ${canClose ? `<button data-act="closeFeeder" class="bp" style="padding:0 18px;background:#2E7D32">✓ ปิดงาน Feeder ${esc(f.code)}</button>` : ''}
+      ${st.allPass ? '' : `<div style="font-size:15px;color:#5E5566">ปิดงานได้เมื่อทุกช่วงผ่าน (ค้าง ${f.segments.length - st.passN} ช่วง)</div>`}</div>
+    <div data-rwrap style="max-width:1000px;margin:12px auto 32px;padding:0 16px"><div data-rcard style="background:#fff;border:1px solid #E3DCE8;border-radius:12px;padding:24px;display:flex;flex-direction:column;gap:22px">
+      <div style="display:flex;gap:14px;align-items:center;border-bottom:3px solid ${P};padding-bottom:16px;flex-wrap:wrap">
+        <div style="flex:none;width:52px;height:52px;border-radius:12px;background:${P};color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800">กฟภ.</div>
+        <div style="flex:1;min-width:220px"><div style="font-size:15px;color:#5E5566">รายงานสรุปผลการตรวจรับงานตัดต้นไม้ · การไฟฟ้าส่วนภูมิภาค ${esc(officeName(f.office))}</div><div style="font-size:24px;font-weight:800;line-height:1.3"><span class="mono" style="color:${P}">${esc(f.code)}</span> ${esc(f.line)}</div></div>
+        ${pill(FEED[st.status], ';flex:none;padding:5px 12px;font-size:14px;font-weight:800')}</div>
+      <div data-rmeta style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px 24px;font-size:15px">
+        ${[['ผู้รับจ้าง', f.contractor], ['ผู้ตรวจรับ', S.me.full_name], ['วันที่นำเข้าข้อมูล', fmtDay(f.imported_at)], ['วันที่ปิดงาน', f.closed_at ? fmtDay(f.closed_at) : 'ยังไม่ปิดงาน']].map(([l, v]) => `<div><div style="font-size:13px;color:#5E5566">${l}</div><div style="font-weight:700">${esc(v)}</div></div>`).join('')}</div>
+      <div data-rtiles style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px">${t2(f.segments.length, 'ช่วงงานตัด', '#1C1324')}${t2(st.km.toFixed(2), 'ระยะทาง (กม.)', '#1C1324')}${t2(st.passN + '/' + f.segments.length, 'ช่วงที่ผ่าน', '#2E7D32')}${t2(st.ds.length, 'จุดบกพร่องทั้งหมด', '#1C1324')}${t2(st.out + st.rev, 'จุดค้าง (ยังไม่ผ่าน)', st.out + st.rev ? '#C62828' : '#1B5E20')}${t2(st.rounds || '–', 'จำนวนรอบตรวจ', P)}</div>
+      <div style="display:flex;flex-direction:column;gap:8px"><div style="font-size:16px;font-weight:800">ผลการตรวจรายช่วง</div>
+        <div data-ptable style="overflow-x:auto;border:1px solid #E3DCE8;border-radius:10px"><div style="min-width:860px">
+          <div class="prow" style="display:grid;${COLS};gap:8px;padding:10px 12px;background:#F1E7F6;font-size:13px;font-weight:800;color:#3E0F55"><span>ช่วง</span><span>แรงดัน</span><span>ต้น</span><span>ความหนาแน่น</span><span>กม.</span><span>จุดบกพร่อง</span><span>รอบตรวจ</span><span>สถานะ</span><span>วันที่ผ่าน</span></div>
+          ${f.segments.map((x, i) => { const ds = dOf(f.id, x.seq), sg = SEG[st.st[i]]; return `<div class="row prow" style="${COLS};padding:10px 12px;font-size:14px"><b>${x.seq}</b><span>${esc(dash(x.voltage))}</span><span>${dash(x.plan_trees)}</span><span>${esc(densText(x))}</span><span>${x.length_km.toFixed(2)}</span><span>${ds.length || '–'}</span><span>${ds.length ? Math.max(...ds.map(y => y.round_no)) : (x.passed_at ? 1 : '–')}</span><span><span style="padding:2px 8px;border-radius:999px;background:${sg.bg};color:${sg.fg};font-weight:700;white-space:nowrap">${sg.glyph} ${sg.label}</span></span><span>${segPassAt(f, x)}</span></div>`; }).join('')}
+          <div class="prow" style="display:grid;${COLS};gap:8px;padding:10px 12px;border-top:2px solid ${P};font-size:14px;font-weight:800"><span>รวม</span><span></span><span>${st.trees}</span><span></span><span>${st.km.toFixed(2)}</span><span>${st.ds.length}</span><span></span><span>ผ่าน ${st.passN}/${f.segments.length}</span><span></span></div>
+        </div></div></div>
+      <div class="psign" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:24px;margin-top:12px">${sign(S.me.full_name, 'ผู้ตรวจรับ กฟภ.')}${sign(f.contractor, 'ผู้รับจ้าง')}</div>
+    </div></div></div>`;
+}
+
+// ════════════════════════════════════════════════════════════════
+// SHEETS / OVERLAYS
+// ════════════════════════════════════════════════════════════════
+function vSheet() {
+  if (!S.sheet || (S.sheet === 'defect' ? !S.draft : !S.form)) return '';
+  const f = curF(), wide = S.wide, offline = !S.online;
+  const pos = wide ? 'left:auto;top:0;width:440px;border-radius:0' : `left:0;top:${S.sheet === 'defect' ? '42%' : '10%'};width:auto;border-radius:18px 18px 0 0`;
+  const photos = (list, cls, fileAct, demoAct, hint) => `<div class="grid3">${list.map(ph => photo(ph, cls)).join('')}${camInput(fileAct)}</div>
+    <div style="display:flex;justify-content:space-between;gap:8px;font-size:13px;color:#5E5566"><span>${hint}</span>${LIVE ? '' : `<button data-act="${demoAct}" class="link">+ รูปตัวอย่าง</button>`}</div>`;
+  let title, sub, body, saveLabel, saveBg;
+  if (S.sheet === 'defect') {
+    const dt = S.draft, sn = snapAll(dt.lat, dt.lng, f), cur = sn.find(y => y.seq === dt.seq) || sn[0];
+    title = 'ปักจุดบกพร่อง'; sub = f.code + ' · ' + f.line; saveLabel = offline ? 'บันทึกไว้ในเครื่อง' : 'บันทึกจุดบกพร่อง'; saveBg = offline ? '#2B2230' : P;
+    body = `<div style="display:flex;flex-direction:column;gap:8px"><div class="h15">ช่วงงานตัด <span class="sub">· ${dt.manual ? 'เลือกเอง' : 'snap อัตโนมัติจาก GPS'}</span></div>
+        <div style="display:flex;align-items:center;gap:12px;padding:12px;border-radius:12px;background:#F1E7F6"><div style="flex:none;width:44px;height:44px;border-radius:10px;background:#fff;border:3px solid ${P};display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:800">${dt.seq}</div>
+          <div style="flex:1;min-width:0"><div style="font-size:17px;font-weight:800">ช่วงที่ ${dt.seq}</div><div style="font-size:14px;color:#3E0F55">ห่างจากแนวสาย ${Math.round(cur.d)} ม.</div></div></div>
+        ${cur.d > FAR_M ? '<div style="padding:10px 12px;border-radius:10px;background:#FFEFD6;color:#7A3B00;font-size:14px;font-weight:700">! หมุดอยู่ห่างแนวสายเกิน 50 ม. — ตรวจสอบตำแหน่งหรือเลือกช่วงเอง</div>' : ''}
+        <div style="display:flex;gap:8px;flex-wrap:wrap">${sn.slice(0, 4).map(o => chipBtn(o.seq === dt.seq, 'ช่วง ' + o.seq + ' · ' + fmtDist(o.d), 'draftSeg', o.seq, CHIP_SEG)).join('')}</div></div>
+      <div style="display:flex;flex-direction:column;gap:8px"><div class="h15">พิกัด</div>
+        <div style="display:flex;align-items:center;gap:12px;padding:12px;border-radius:12px;background:#F6F3F8"><div style="flex:1;min-width:0"><div class="mono" style="font-size:15px;font-weight:700">${dt.lat.toFixed(6)}, ${dt.lng.toFixed(6)}</div><div style="font-size:13px;color:#5E5566">${dt.src === 'gps' && S.user ? 'GPS ความแม่นยำ ±' + Math.round(S.user.acc || 6) + ' ม. · ' + fmtAt(S.user.at || nowIso()) : dt.src === 'drag' ? 'ปรับตำแหน่งเองบนแผนที่' : dt.src === 'seg' ? 'วางกลางช่วง — คุณอยู่ไกลจากช่วงนี้ ลากหมุดไปจุดจริง' : 'ไม่มีสัญญาณ GPS — ใช้กลางแผนที่ ลากหมุดไปจุดจริง'}</div></div>
+          <button data-act="regps" class="bo" style="flex:none;height:44px;padding:0 12px;border-radius:10px;font-size:14px">ใช้ GPS ใหม่</button></div>
+        <div style="font-size:14px;color:#5E5566">ลากหมุดสีม่วง หรือแตะบนแผนที่เพื่อปรับตำแหน่ง</div></div>
+      <div style="display:flex;flex-direction:column;gap:8px"><div class="h15">รูปถ่าย <span class="sub">· ${dt.photos.length} รูป</span></div>${photos(dt.photos, '', 'draftPhotos', 'demoDraftPhoto', 'ย่อรูปในเครื่องก่อนอัปโหลด')}</div>
+      <div style="display:flex;flex-direction:column;gap:8px"><div class="h15">ประเภทปัญหา <span style="color:#B3261E">*</span></div><div style="display:flex;flex-wrap:wrap;gap:8px">${TYPES.map((t, i) => chipBtn(dt.type === t, t, 'draftType', i, CHIP_TYPE)).join('')}</div></div>
+      <label style="display:flex;flex-direction:column;gap:8px"><span class="h15">หมายเหตุ</span><textarea class="ta" data-in="draft.note" rows="3" placeholder="เช่น กิ่งห่างสาย 22 kV ประมาณ 1 ม. ด้านทิศเหนือ">${esc(dt.note)}</textarea></label>
+      <div style="display:flex;flex-direction:column;gap:8px"><div class="h15">รอบการตรวจ</div><div class="seg2">${[1, 2, 3].map(r => { const on = dt.round === r; return `<button data-act="draftRound" data-arg="${r}" style="background:${on ? '#fff' : 'transparent'};color:${on ? P : '#5E5566'};box-shadow:${on ? '0 1px 3px rgba(0,0,0,.15)' : 'none'}">ครั้งที่ ${r}</button>`; }).join('')}</div></div>`;
+  } else {
+    const fm = S.form, x = S.defects.find(y => y.id === fm.id), isFix = S.sheet === 'fix', before = x.events[0].photos[0];
+    title = isFix ? 'ส่งหลักฐานการแก้ไข' : 'ไม่ผ่าน · ส่งกลับแก้ใหม่'; sub = x.code + ' · ช่วงที่ ' + x.seq;
+    saveLabel = offline ? 'บันทึกไว้ในเครื่อง' : (isFix ? 'ส่งหลักฐาน' : 'ยืนยัน ไม่ผ่าน'); saveBg = offline ? '#2B2230' : (isFix ? P : '#7F1D1D');
+    body = isFix ? `<div style="display:flex;gap:12px;align-items:center;padding:12px;border-radius:12px;background:#F6F3F8">
+          <div class="ph" style="flex:none;width:72px;height:72px;border-radius:8px">${before && before.url ? `<i style="background-image:url('${before.url}')"></i>` : ''}<span style="right:auto;font-weight:700">ก่อน</span></div>
+          <div style="flex:1;min-width:0"><div style="font-size:16px;font-weight:700">${esc(x.issue_type)}</div><div style="font-size:14px;color:#5E5566">${esc(x.events[0].note || '–')}</div></div></div>
+        <div style="display:flex;flex-direction:column;gap:8px"><div class="h15">รูปหลังแก้ไข <span style="color:#B3261E">*</span> <span class="sub">· ${fm.photos.length} รูป</span></div>${photos(fm.photos, 'g', 'sheetPhotos', 'demoSheetPhoto', 'ถ่ายมุมเดียวกับรูปก่อนแก้ไข')}</div>
+        <label style="display:flex;flex-direction:column;gap:8px"><span class="h15">หมายเหตุการแก้ไข</span><textarea class="ta" data-in="form.note" rows="3" placeholder="เช่น ตัดกิ่งส่วนที่เหลือและเก็บกิ่งออกแล้ว">${esc(fm.note)}</textarea></label>`
+      : `<div style="padding:12px 14px;border-radius:12px;background:#F6D5D5;color:#6B1414;font-size:15px;font-weight:600">จุดนี้จะถูกส่งกลับให้ผู้รับจ้างแก้ไขใหม่ และบันทึกเป็นตรวจครั้งที่ ${x.round_no + 1}</div>
+        <label style="display:flex;flex-direction:column;gap:8px"><span class="h15">เหตุผลที่ไม่ผ่าน <span style="color:#B3261E">*</span></span><textarea class="ta" data-in="form.note" rows="4" placeholder="เช่น ยังมีกิ่งเหลือห่างสายไม่ถึง 3 ม.">${esc(fm.note)}</textarea></label>
+        <div style="display:flex;flex-direction:column;gap:8px"><div class="h15">รูปประกอบ <span class="sub">· ${fm.photos.length} รูป</span></div><div class="grid3">${fm.photos.map(ph => photo(ph)).join('')}${camInput('sheetPhotos')}</div>
+          ${LIVE ? '' : '<button data-act="demoSheetPhoto" class="link" style="align-self:flex-end">+ รูปตัวอย่าง</button>'}</div>`;
+  }
+  return `<div data-noprint style="position:absolute;z-index:1200;${pos};right:0;bottom:0;background:#fff;box-shadow:0 -8px 30px rgba(28,19,36,.28);display:flex;flex-direction:column">
+    <div style="flex:none;padding:6px 8px 6px 16px;display:flex;flex-direction:column;border-bottom:1px solid #ECE6EF">
+      ${wide ? '' : '<div style="align-self:center;width:44px;height:5px;border-radius:3px;background:#C9BED1;margin:2px 0 4px"></div>'}
+      <div style="display:flex;align-items:center;gap:8px"><div style="flex:1;min-width:0"><div style="font-size:19px;font-weight:800">${title}</div><div style="font-size:14px;color:#5E5566">${esc(sub)}</div></div>
+        <button data-act="closeSheet" aria-label="ปิด" style="flex:none;width:48px;height:48px;border:0;border-radius:24px;background:#F6F3F8;color:#1C1324;font-size:20px">✕</button></div></div>
+    <div data-scroll="sheet" style="flex:1;min-height:0;overflow:auto;padding:16px;display:grid;align-content:start;gap:18px">${body}</div>
+    <div style="flex:none;padding:12px 16px 16px;border-top:1px solid #ECE6EF;display:flex;flex-direction:column;gap:8px">
+      ${S.err ? `<div style="font-size:15px;font-weight:700;color:#B3261E">${esc(S.err)}</div>` : ''}
+      ${offline ? '<div style="font-size:14px;font-weight:700;color:#2B2230;background:#FFE082;border-radius:8px;padding:6px 10px;text-align:center">ออฟไลน์ — จะบันทึกไว้ในเครื่อง และส่งอัตโนมัติเมื่อมีสัญญาณ</div>' : ''}
+      <button data-act="saveSheet" ${S.busy ? 'disabled' : ''} style="opacity:${S.busy ? .6 : 1};height:56px;border:0;border-radius:12px;background:${saveBg};color:#fff;font-size:18px;font-weight:800">${S.busy ? 'กำลังบันทึก…' : saveLabel}</button></div></div>`;
+}
+function vNotif() {
+  if (!S.showNotif || !isInsp() || S.screen === 'login') return '';
+  return `<div data-noprint style="position:absolute;z-index:1250;top:6px;right:8px;width:min(380px,calc(100% - 16px));max-height:70%;overflow:auto;background:#fff;border-radius:14px;box-shadow:0 10px 30px rgba(28,19,36,.3);display:flex;flex-direction:column">
+    <div style="padding:12px 16px;font-size:16px;font-weight:800;border-bottom:1px solid #ECE6EF">การแจ้งเตือน (อัปเดตทันที)</div>
+    ${S.notifs.map(n => `<button data-act="openNotif" data-arg="${n.id}" style="display:flex;gap:12px;align-items:flex-start;text-align:left;padding:12px 16px;border:0;border-bottom:1px solid #ECE6EF;background:#fff"><span class="ico" style="width:30px;height:30px;border-radius:6px;background:#E87500">⧗</span><span style="flex:1;min-width:0"><span style="display:block;font-size:15px;font-weight:700;color:#1C1324">${esc(n.text)}</span><span style="display:block;font-size:13px;color:#5E5566">${esc(n.sub)} · ${fmtAt(n.at)}</span></span></button>`).join('')}
+    ${S.notifs.length ? '' : '<div style="padding:24px 16px;text-align:center;color:#5E5566;font-size:15px">ยังไม่มีการแจ้งเตือน</div>'}</div>`;
+}
+const vToast = () => S.toast ? `<div data-noprint style="position:absolute;z-index:1300;left:50%;top:12px;transform:translateX(-50%);width:max-content;max-width:calc(100% - 24px);padding:12px 18px;border-radius:12px;background:${TOAST_BG[S.toast.kind] || '#1C1324'};color:#fff;font-size:15px;font-weight:700;box-shadow:0 6px 20px rgba(0,0,0,.3)">${esc(S.toast.text)}</div>` : '';
+
+// ════════════════════════════════════════════════════════════════
+// RENDER + EVENTS
+// ════════════════════════════════════════════════════════════════
+const shell = document.getElementById('shell');
+function render() {
+  const sc = {}; shell.querySelectorAll('[data-scroll]').forEach(el => { sc[el.dataset.scroll] = el.scrollTop; });
+  const f = curF(), screen = S.screen === 'login' ? vLogin() : S.screen === 'dash' ? vDash() : S.screen === 'import' ? vImport()
+    : !f ? '' : S.screen === 'feeder' ? vFeeder() : S.screen === 'report' ? vReport() : S.screen === 'fdash' ? vFDash() : '';
+  shell.innerHTML = vHeader() + `<div data-main style="flex:1;min-height:0;position:relative;display:flex;flex-direction:column">${screen}${vSheet()}${vNotif()}${vToast()}</div>`;
+  shell.querySelectorAll('[data-scroll]').forEach(el => { if (sc[el.dataset.scroll]) el.scrollTop = sc[el.dataset.scroll]; });
+  const ms = shell.querySelector('[data-slot=map]'); if (ms) ms.replaceWith(mapEl);
+  const mn = shell.querySelector('[data-slot=mini]'); if (mn) mn.replaceWith(miniEl);
+  syncMaps();
+}
+const ACT = {
+  noop() {},
+  pickRole: k => set({ role: k, loginErr: null, ...(LIVE ? {} : { loginId: defaultUser(S.office, k) }) }),
+  login, credits: v => set({ credits: !!v }),
+  logout,
+  toggleOnline: () => LIVE ? flush() : toggleOnline(), toggleNotif: () => set({ showNotif: !S.showNotif, unread: 0 }),
+  back() { if (S.sheet) return closeSheet(); if (S.screen === 'feeder' && S.panel.mode !== 'list') return panelBack(); if (S.screen === 'report') return openFeeder(S.cur); set({ screen: 'dash', cur: null, imp: { step: 'pick' } }); },
+  goImport: () => set({ screen: 'import', imp: { step: 'pick' } }),
+  openFeeder, report: id => set({ screen: 'report', cur: id }), fdash: id => set({ screen: 'fdash', cur: id }),
+  segOnMap(seq) { openFeeder(S.cur); selectSeg(+seq); },
+  defOnMap(id) { openFeeder(S.cur); openDefect(id); },
+  impSample: k => k === 'new' ? mockImport('MDA05R-02 ไลน์นาโพธิ์กลาง', [1,2,3,4,5,6,7], [6]) : mockImport('MDA03R-04 ไลน์เหล่าสร้างถ่อ', [8,9,10,11], []),
+  impMode: k => set({ imp: { ...S.imp, mode: k } }), impReset: () => set({ imp: { step: 'pick' } }), impConfirm,
+  viewMap: () => set({ view: 'map' }), viewList: () => set({ view: 'list' }), toggleLegend: () => set({ legend: !S.legend }), toggleBase: () => set({ base: S.base === 'sat' ? 'osm' : 'sat' }),
+  locate() { if (!S.user) return showToast(S.gpsErr || 'กำลังหาตำแหน่ง GPS…', 'off'); centerTo = [S.user.lat, S.user.lng]; render(); },
+  clearSeg: () => set({ panel: { mode: 'list' } }), panelBack, chip: k => set({ chip: k }),
+  selectSeg: seq => selectSeg(+seq), openDefect, passSeg: seq => passSeg(+seq), startDefect: seq => startDefect(seq ? +seq : null),
+  nav: a => { const [lat, lng] = a.split(',').map(Number); nav(lat, lng); },
+  startFix: id => set({ sheet: 'fix', err: null, form: { id, note: '', photos: [] } }),
+  startReject: () => set({ sheet: 'reject', err: null, form: { id: S.panel.id, note: '', photos: [] } }),
+  passDefect,
+  print() { const t = document.title, f = curF(); document.title = 'รายงาน ' + f.code + (f.line ? ' ' + f.line : ''); window.print(); document.title = t; },
+  closeFeeder,
+  closeSheet, saveSheet: () => ({ defect: saveDefect, fix: saveFix, reject: saveReject })[S.sheet](),
+  draftSeg: seq => set({ draft: { ...S.draft, seq: +seq, manual: true } }),
+  draftType: i => set({ draft: { ...S.draft, type: TYPES[+i] }, err: null }),
+  draftRound: r => set({ draft: { ...S.draft, round: +r } }),
+  regps() { if (!S.user) return showToast(S.gpsErr || 'ยังไม่มีสัญญาณ GPS', 'off'); centerTo = [S.user.lat, S.user.lng]; moveDraft(S.user.lat, S.user.lng, 'gps'); },
+  demoDraftPhoto: () => set({ draft: { ...S.draft, photos: [...S.draft.photos, demoPhoto()] } }),
+  demoSheetPhoto: () => set({ form: { ...S.form, photos: [...S.form.photos, demoPhoto()] }, err: null }),
+  openNotif(id) { const n = S.notifs.find(x => String(x.id) === id); if (!n) return; openFeeder(n.feederId); openDefect(n.defectId); }
+};
+const FILE = {
+  impPick: impPickFiles,
+  draftPhotos: async e => { const fs = Array.from(e.target.files || []); e.target.value = ''; const p = await readPhotos(fs); set({ draft: { ...S.draft, photos: [...S.draft.photos, ...p] } }); },
+  sheetPhotos: async e => { const fs = Array.from(e.target.files || []); e.target.value = ''; const p = await readPhotos(fs); set({ form: { ...S.form, photos: [...S.form.photos, ...p] }, err: null }); }
+};
+shell.addEventListener('click', e => { const el = e.target.closest('[data-act]'); if (!el || el.disabled) return; ACT[el.dataset.act](el.dataset.arg); });
+// พิมพ์ = เก็บค่าเงียบๆ (ไม่ render → focus ไม่หลุด); data-rr = render ตอน change
+const setPath = (path, v) => { const k = path.split('.'); if (k.length === 1) S[k[0]] = v; else S[k[0]] = { ...S[k[0]], [k[1]]: v }; };
+shell.addEventListener('input', e => { const p = e.target.dataset.in; if (p) setPath(p, e.target.value); });
+shell.addEventListener('change', e => {
+  const t = e.target; if (t.dataset.file) return FILE[t.dataset.file](e);
+  if (t.dataset.in === 'office' && !LIVE) S.loginId = defaultUser(t.value, S.role);
+  if (t.dataset.in && 'rr' in t.dataset) render();
+});
+shell.addEventListener('keydown', e => { if (e.key === 'Enter' && S.screen === 'login' && e.target.tagName === 'INPUT') login(); });
+new ResizeObserver(() => { const w = shell.clientWidth >= WIDE_PX; if (w !== S.wide) set({ wide: w, legend: w }); else if (map) map.invalidateSize(); }).observe(shell);
+S.wide = shell.clientWidth >= WIDE_PX; S.legend = S.wide;
+render();
+// เครือข่ายจริง (LIVE): ออนไลน์ → ส่งคิว · ลองซ้ำทุก 30 วิ เผื่อ event online ไม่มา
+if (LIVE) {
+  S.online = navigator.onLine;
+  addEventListener('online', () => { set({ online: true }); flush(); });
+  addEventListener('offline', () => set({ online: false }));
+  setInterval(flush, 30000);
+}
+// Service Worker: เปิดแอปได้ตอนไม่มีเน็ต (ต้องเป็น https/localhost)
+if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(e => console.warn('sw', e));
+db.init().then(u => u ? enter(u) : render()).catch(e => showToast('เชื่อมต่อฐานข้อมูลไม่สำเร็จ: ' + e.message, 'err', 8000));
+</script>
+</body>
+</html>
