@@ -793,7 +793,7 @@ const CHIP_FILTER = 'flex:none;height:40px;padding:0 14px;border-radius:20px;fon
 function vHeader() {
   if (S.screen === 'login') return '';
   const f = curF(), insp = isInsp();
-  const t = { dash: ['ระบบตรวจรับงานตัดต้นไม้', insp ? S.me.full_name + ' · ผู้ตรวจ ' + officeName(S.me.office) : S.me.company + ' · ผู้รับจ้าง'],
+  const t = { dash: ['ระบบตรวจรับงานตัดต้นไม้', insp ? 'ผู้ตรวจงาน' : 'ผู้รับจ้าง'],
     import: ['นำเข้า Feeder', 'เลือกโฟลเดอร์ KMZ'], feeder: [f && f.code, f && f.line], report: ['รายงานสรุป ' + (f ? f.code : ''), f && f.line], fdash: ['ความคืบหน้า ' + (f ? f.code : ''), f && f.line] }[S.screen] || ['', ''];
   const net = S.online ? { bg: 'rgba(255,255,255,.14)', fg: '#fff', dot: '#7CE08A', label: 'ออนไลน์' } : { bg: '#FFE082', fg: '#2B2230', dot: '#2B2230', label: 'ออฟไลน์' };
   const banner = !S.online ? { bg: '#2B2230', fg: '#FFE082', icon: '!', text: S.queue ? 'ออฟไลน์ — บันทึกไว้ในเครื่อง ' + S.queue + ' รายการ รอส่ง' : 'ออฟไลน์ — ข้อมูลที่บันทึกจะเก็บไว้ในเครื่อง รอส่ง' }
@@ -873,7 +873,7 @@ function vDash() {
   }).join('');
   return `<div data-scroll="dash" class="scroll"><div style="max-width:1200px;margin:0 auto;padding:20px 16px 120px;display:flex;flex-direction:column;gap:18px">
     <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap">
-      <div><div style="font-size:15px;color:#5E5566">${esc(insp ? 'สวัสดี คุณ' + S.me.full_name + ' · ผู้ตรวจ ' + officeName(S.me.office) : S.me.company + ' · ผู้รับจ้าง')}</div><div style="font-size:26px;font-weight:800;line-height:1.25">${insp ? 'ภาพรวมงานตรวจรับ' : 'งานที่ต้องแก้ไข'}</div></div>
+      <div><div style="font-size:15px;color:#5E5566">${insp ? 'ผู้ตรวจงาน' : 'ผู้รับจ้าง'}</div><div style="font-size:26px;font-weight:800;line-height:1.25">${insp ? 'ภาพรวมงานตรวจรับ' : 'งานที่ต้องแก้ไข'}</div></div>
       ${insp && S.wide ? `<button data-act="goImport" class="bp" style="padding:0 20px;display:flex;align-items:center;gap:8px"><span style="font-size:22px;line-height:1">+</span>นำเข้า Feeder</button>` : ''}</div>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px">${tiles.map(t => tile(t[0], t[1], t[2], true)).join('')}</div>
     <div style="font-size:19px;font-weight:700;margin-top:4px">${insp ? 'Feeder ทั้งหมด' : 'Feeder ที่ได้รับมอบหมาย'}</div>
