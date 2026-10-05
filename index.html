@@ -70,7 +70,7 @@ a{color:#5B1A7A}
   [data-rcard]{border:0 !important;padding:0 !important;gap:14px !important}
   [data-ptable]{overflow:visible !important}
   [data-ptable]>div{min-width:0 !important}
-  .prow{grid-template-columns:26px 70px 34px minmax(0,1fr) 40px 52px 44px 98px 60px !important;gap:4px !important;padding:5px 6px !important;font-size:10.5px !important;break-inside:avoid}
+  .prow{grid-template-columns:26px 70px 34px minmax(0,1fr) 40px 60px 52px 44px 98px 60px !important;gap:4px !important;padding:5px 6px !important;font-size:10.5px !important;break-inside:avoid}
   .prow span span{white-space:normal !important;padding:1px 5px !important}
   .psign{break-inside:avoid}
   [data-rmeta]{grid-template-columns:repeat(4,1fr) !important}
@@ -110,16 +110,22 @@ const DEF = {
   passed:   { label:'ผ่าน',            solid:'#2E7D32', bg:'#E3F2E4', fg:'#1B5E20', glyph:'✓', shape:'50%' },
   rejected: { label:'ไม่ผ่าน ส่งกลับ',  solid:'#7F1D1D', bg:'#F6D5D5', fg:'#6B1414', glyph:'✕', shape:'2px' }
 };
+// ไอคอนเส้น (SVG สีตาม currentColor) — ใช้แทน emoji ที่มือถือแต่ละรุ่นวาดสีไม่เหมือนกัน
+const svgIco = d => `<svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-0.14em;flex:none">${d}</svg>`;
+const I_PROGRESS = svgIco('<circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor" stroke="none"/>');   // ครึ่งวง = กำลังดำเนินการ
+const I_SCISSORS = svgIco('<circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4 8.1 15.9M14.5 14.5 20 20M8.1 8.1 12 12"/>');
+const I_GEAR = svgIco('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>');
 // ช่วงงานตัด: cutting/cut = งานของผู้รับจ้างก่อนตรวจรับ (สีเขียวอมฟ้า) · ตรวจแล้ว (defect/pass) แสดงผลตรวจแทน
 const SEG = {
   none:  { label:'ยังไม่เริ่มตัด',     solid:'#6B6472', bg:'#EEEAF0', fg:'#3F3846', glyph:'–' },
-  cutting:{ label:'กำลังตัด',          solid:'#00838F', bg:'#DDF3F4', fg:'#00585F', glyph:'⚒' },
-  cut:   { label:'ตัดเสร็จ รอตรวจ',    solid:'#00636B', bg:'#C9EAEC', fg:'#00454B', glyph:'✂' },
+  cutting:{ label:'กำลังตัด',          solid:'#00838F', bg:'#DDF3F4', fg:'#00585F', glyph:I_PROGRESS },
+  cut:   { label:'ตัดเสร็จ รอตรวจ',    solid:'#00636B', bg:'#C9EAEC', fg:'#00454B', glyph:I_SCISSORS },
   defect:{ label:'มีจุดบกพร่องค้าง',  solid:'#C62828', bg:'#FDE7E7', fg:'#8E1B1B', glyph:'!' },
   pass:  { label:'ผ่าน',             solid:'#2E7D32', bg:'#E3F2E4', fg:'#1B5E20', glyph:'✓' }
 };
 const FEED = {
-  active: { label:'กำลังตรวจ',          bg:'#F1E7F6', fg:'#4A1564', glyph:'●' },
+  cutting:{ label:'ผู้รับจ้างกำลังตัด',  bg:'#DDF3F4', fg:'#00585F', glyph:I_PROGRESS },
+  active:{ label:'กำลังตรวจ',          bg:'#F1E7F6', fg:'#4A1564', glyph:'●' },
   waiting:{ label:'รอผู้รับจ้างแก้ไข',   bg:'#FFEFD6', fg:'#7A3B00', glyph:'⧗' },
   closed: { label:'ปิดงานแล้ว',         bg:'#E3F2E4', fg:'#1B5E20', glyph:'✓' }
 };
@@ -540,7 +546,8 @@ function fStats(f) {
   const pct = f.segments.length ? Math.round(passN/f.segments.length*100) : 0;
   const rounds = ds.reduce((a, d) => Math.max(a, d.round_no), f.segments.some(s => s.passed_at) ? 1 : 0);
   return { ds, st, passN, cutN, startN, out, rev, km, trees, pct, rounds, fresh: ds.filter(d => S.fresh.has(d.id)).length,
-    status: f.closed_at ? 'closed' : (out > 0 ? 'waiting' : 'active'), allPass: f.segments.length > 0 && passN === f.segments.length };
+    // ยังไม่มีผลตรวจเลย แต่ผู้รับจ้างรายงานงานตัดแล้ว = cutting
+    status: f.closed_at ? 'closed' : out > 0 ? 'waiting' : !ds.length && !passN && startN ? 'cutting' : 'active', allPass: f.segments.length > 0 && passN === f.segments.length };
 }
 const myFeeders = () => S.feeders.filter(f => f.office === S.me.office && (isInsp() || f.contractor_id === S.me.id));
 
@@ -871,7 +878,7 @@ function toggleOnline() {
   set({ online: true, syncing: true });
   setTimeout(() => {
     S.syncing = false; S.queue = 0;
-    S.feeders = S.feeders.map(f => ({ ...f, segments: f.segments.map(x => x.pending ? { ...x, pending: false } : x) }));
+    S.feeders = S.feeders.map(f => ({ ...f, segments: f.segments.map(x => ({ ...x, pending: false, works: (x.works || []).map(w => ({ ...w, pending: false })) })) }));
     S.defects = S.defects.map(d => ({ ...d, events: d.events.map(h => h.pending ? { ...h, pending: false } : h) }));
     showToast('ส่งข้อมูลที่ค้างในเครื่องครบแล้ว ' + n + ' รายการ', 'ok');
   }, 1800);
@@ -1006,12 +1013,12 @@ function vLogin() {
         <button data-act="login" style="height:56px;margin-top:6px;border:0;border-radius:12px;background:${P};color:#fff;font-size:18px;font-weight:700">${S.busy ? 'กำลังเข้าสู่ระบบ…' : S.role === 'inspector' ? 'เข้าสู่ระบบ (ผู้ตรวจ)' : 'เข้าสู่ระบบ (ผู้รับจ้าง)'}</button>
       </div>
       <div style="font-size:14px;color:#5E5566;text-align:center;text-wrap:pretty">ผู้รับจ้างจะเห็นเฉพาะ Feeder ที่ได้รับมอบหมายเท่านั้น<br>ชื่อผู้ใช้และรหัสผ่านออกให้โดยการไฟฟ้า</div>
-      <button data-act="admLoginOpen" style="align-self:center;height:44px;padding:0 18px;border:1.5px solid ${P};border-radius:22px;background:#fff;color:${P};font-size:15px;font-weight:700">⚙ จัดการระบบ</button>
+      <button data-act="admLoginOpen" style="align-self:center;height:44px;padding:0 18px;border:1.5px solid ${P};border-radius:22px;background:#fff;color:${P};font-size:15px;font-weight:700">${I_GEAR} จัดการระบบ</button>
       <button data-act="credits" data-arg="1" style="align-self:center;height:44px;padding:0 18px;border:1.5px solid #C9BED1;border-radius:22px;background:#fff;color:${P};font-size:15px;font-weight:700">เครดิตผู้พัฒนา</button>
     </div>
     ${S.admLogin ? `<div data-act="noop" style="position:absolute;inset:0;z-index:1400;background:rgba(28,19,36,.55);display:flex;align-items:center;justify-content:center;padding:20px">
       <div style="width:min(100%,400px);background:#fff;border-radius:18px;box-shadow:0 12px 40px rgba(0,0,0,.35);overflow:hidden">
-        <div style="background:${P};color:#fff;padding:18px 20px"><div style="font-size:19px;font-weight:800">⚙ จัดการระบบ</div><div style="font-size:14px;opacity:.92">สำหรับผู้ดูแลระบบ · ${esc(officeName(S.office))}</div></div>
+        <div style="background:${P};color:#fff;padding:18px 20px"><div style="font-size:19px;font-weight:800">${I_GEAR} จัดการระบบ</div><div style="font-size:14px;opacity:.92">สำหรับผู้ดูแลระบบ · ${esc(officeName(S.office))}</div></div>
         <div style="padding:18px 20px;display:flex;flex-direction:column;gap:12px">
           <label class="lbl"><span>ชื่อผู้ใช้ผู้ดูแลระบบ</span><input class="inp" data-in="admLogin.user" value="${esc(S.admLogin.user)}" autocomplete="username" autocapitalize="off"></label>
           <label class="lbl"><span>รหัสผ่าน</span><input class="inp" type="password" data-in="admLogin.pw" value="${esc(S.admLogin.pw)}" autocomplete="current-password"></label>
@@ -1268,7 +1275,7 @@ function vFeeder() {
         <div style="flex:1;min-width:0"><div style="font-size:18px;font-weight:800;line-height:1.25">ช่วงที่ ${sv.x.seq} · ${sv.x.length_km.toFixed(2)} กม.</div><div style="font-size:14px;color:#5E5566">${esc(sv.short)}</div></div>
         <button data-act="clearSeg" aria-label="ปิด" style="flex:none;width:44px;height:44px;border:0;border-radius:22px;background:#F6F3F8;font-size:18px;color:#1C1324">✕</button></div>
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">${pill(sv.st, ';font-size:14px;font-weight:800;padding:3px 10px')}<span style="font-size:14px;color:#4A3F52">${sv.summary}</span></div>
-      ${insp ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">${passBtn(sv, 52)}${pinBtn(sv, 52)}</div>` : workBtn(f, sv.x, 52)}
+      ${insp ? (f.closed_at ? '' : `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">${passBtn(sv, 52)}${pinBtn(sv, 52)}</div>`) : workBtn(f, sv.x, 52)}
       <button data-act="viewList" style="height:44px;border:0;background:transparent;color:${P};font-size:15px;font-weight:700;text-decoration:underline">ดูรายละเอียดช่วงและจุดบกพร่อง ›</button></div>` : ''}
   </div>`;
   // ── แผงขวา: รายการ / ช่วง / จุด ──
@@ -1284,7 +1291,7 @@ function vFeeder() {
         <div style="display:flex;flex-direction:column;gap:8px"><div style="font-size:16px;font-weight:800">จุดบกพร่องในช่วงนี้ (${sv.ds.length})</div>
           ${sv.ds.map(itemOf).map(it => `<div data-act="openDefect" data-arg="${esc(it.x.id)}" style="display:flex;gap:12px;align-items:center;padding:12px;border:1px solid #E3DCE8;border-radius:12px;cursor:pointer;background:${it.rowBg}">${defIco(it.k, 36, 17)}<div style="flex:1;min-width:0"><div style="font-size:16px;font-weight:700">${esc(it.x.issue_type)}</div><div style="font-size:14px;color:#5E5566"><span class="mono">${esc(it.x.code)}</span> · <b style="color:${it.k.fg}">${it.k.label}</b> · ตรวจครั้งที่ ${it.x.round_no}</div></div><span style="flex:none;font-size:24px;color:#9A8FA3">›</span></div>`).join('')}
           ${sv.ds.length ? '' : '<div style="padding:16px;border:2px dashed #DDD5E2;border-radius:12px;text-align:center;color:#5E5566;font-size:15px">ยังไม่มีจุดบกพร่องในช่วงนี้</div>'}</div></div>` +
-      footBox((insp ? (sv.out > 0 || sv.passed ? `<div style="font-size:14px;font-weight:700;color:${sv.passed ? '#1B5E20' : '#8E1B1B'};text-align:center">${sv.passed ? '✓ ช่วงนี้ผ่านแล้ว' : 'ยังมีจุดบกพร่องค้าง ' + sv.out + ' จุด — ผ่านทั้งช่วงไม่ได้'}</div>` : '') + `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">${passBtn(sv, 56)}${pinBtn(sv, 56)}</div>` : workBtn(f, x, 56)) +
+      footBox((insp && f.closed_at ? `<div style="font-size:14px;font-weight:700;color:#1B5E20;text-align:center">✓ ปิดงาน Feeder นี้แล้ว</div>` : insp ? (sv.out > 0 || sv.passed ? `<div style="font-size:14px;font-weight:700;color:${sv.passed ? '#1B5E20' : '#8E1B1B'};text-align:center">${sv.passed ? '✓ ช่วงนี้ผ่านแล้ว' : 'ยังมีจุดบกพร่องค้าง ' + sv.out + ' จุด — ผ่านทั้งช่วงไม่ได้'}</div>` : '') + `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">${passBtn(sv, 56)}${pinBtn(sv, 56)}</div>` : workBtn(f, x, 56)) +
         `<button data-act="nav" data-arg="${mid[0]},${mid[1]}" class="bnav">นำทางไปช่วงนี้ · ${fmtDist(segDist(x))}</button>`);
   } else if (dDef) {
     const x = dDef, k = DEF[x.status], found = x.events[0], fixes = x.events.filter(h => h.kind === 'fix_submitted'), lastFix = fixes[fixes.length-1];
@@ -1326,6 +1333,7 @@ function vFeeder() {
     if (!insp && !isWork) groups.sort((a, b) => (a.dist ?? Infinity) - (b.dist ?? Infinity));
     panel = `<div style="flex:none;padding:14px 16px 12px;border-bottom:1px solid #ECE6EF;display:flex;flex-direction:column;gap:10px">
         <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap"><div style="font-size:18px;font-weight:800">${insp ? 'ช่วงงานตัด ' + f.segments.length + ' ช่วง' : isWork ? 'งานตัดต้นไม้' : 'จุดที่ต้องแก้ไข'}</div><div style="font-size:14px;color:#5E5566">${isWork ? 'ตัดเสร็จ ' + st.cutN + '/' + f.segments.length + ' ช่วง' : 'ผ่าน ' + st.passN + '/' + f.segments.length + ' ช่วง'} · ${st.km.toFixed(2)} กม.</div></div>
+        ${insp ? (() => { const go = st.allPass && !f.closed_at; return `<button data-act="report" data-arg="${esc(f.id)}" class="${go ? '' : 'bo'}" style="height:44px;border-radius:10px;font-size:15px;font-weight:800${go ? ';border:0;background:#2E7D32;color:#fff' : ''}">${go ? '✓ ตรวจครบทุกช่วงแล้ว · รายงาน / ปิดงาน' : 'รายงานสรุป'}</button>`; })() : ''}
         <div style="height:8px;border-radius:4px;background:#EFEAF2;overflow:hidden"><div style="height:100%;width:${isWork ? Math.round(st.cutN / (f.segments.length || 1) * 100) : st.pct}%;background:${isWork ? SEG.cut.solid : '#2E7D32'}"></div></div>
         ${insp ? '' : isWork ? `<div style="font-size:14px;color:${SEG.cut.fg};background:${SEG.cutting.bg};border-radius:10px;padding:8px 12px">แต่ละช่วง: กด <b>เริ่มตัด</b> ก่อนลงมือ (รูปก่อนตัด ≥ 1) และ <b>แจ้งตัดเสร็จ</b> เมื่อตัดครบช่วง (รูปหลังตัด ≥ 4: ต้นช่วง · กลางช่วง · ปลายช่วง · การเก็บกิ่ง) · ถ่ายที่หน้างาน ระบบบันทึกพิกัด GPS</div>` : '<div style="font-size:14px;color:#3E0F55;background:#F1E7F6;border-radius:10px;padding:8px 12px">จัดกลุ่มตามช่วง เรียงตามระยะทางจากตำแหน่งปัจจุบันของคุณ</div>'}
         <div style="display:flex;gap:8px;overflow-x:auto;padding-bottom:2px">${chipDefs.map(([k, label, fn]) => chipBtn(k === cd[0], label + ' · ' + (k === 'all' ? f.segments.length + ' ช่วง' : k === 'work' ? st.cutN + '/' + f.segments.length : st.ds.filter(fn).length), 'chip', k, CHIP_FILTER)).join('')}</div></div>
@@ -1343,7 +1351,7 @@ function vFeeder() {
   const tg = on => `background:${on ? '#fff' : 'transparent'};color:${on ? P : '#5E5566'};box-shadow:${on ? '0 1px 3px rgba(0,0,0,.15)' : 'none'}`;
   return `<div style="flex:1;min-height:0;display:flex;flex-direction:column">
     ${wide ? '' : `<div data-noprint style="flex:none;padding:8px 12px;background:#fff;border-bottom:1px solid #E3DCE8"><div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;background:#EFEAF2;border-radius:12px;padding:4px">
-      <button data-act="viewMap" style="height:44px;border:0;border-radius:9px;font-size:16px;font-weight:700;${tg(!listOn)}">แผนที่</button><button data-act="viewList" style="height:44px;border:0;border-radius:9px;font-size:16px;font-weight:700;${tg(listOn)}">${insp ? 'รายการ (' + f.segments.length + ' ช่วง)' : 'รายการ (' + st.out + ')'}</button></div></div>`}
+      <button data-act="viewMap" style="height:44px;border:0;border-radius:9px;font-size:16px;font-weight:700;${tg(!listOn)}">แผนที่</button><button data-act="viewList" style="height:44px;border:0;border-radius:9px;font-size:16px;font-weight:700;${tg(listOn)}">${insp ? 'รายการ (' + f.segments.length + ' ช่วง)' : st.out ? 'รายการ (ต้องแก้ ' + st.out + ')' : 'รายการ'}</button></div></div>`}
     <div style="flex:1;min-height:0;display:grid;grid-template-columns:${wide ? 'minmax(0,1fr) 440px' : 'minmax(0,1fr)'};grid-template-rows:minmax(0,1fr)">
       ${mapCol}<div style="min-height:0;display:${wide || listOn ? 'flex' : 'none'};flex-direction:column;background:#fff;border-left:1px solid #E3DCE8">${panel}</div></div></div>`;
 }
@@ -1424,7 +1432,8 @@ function vAdmin() {
 
 function vReport() {
   const f = curF(), st = fStats(f), canClose = st.allPass && !f.closed_at;
-  const COLS = 'grid-template-columns:50px 110px 70px minmax(150px,1fr) 80px 90px 80px 150px 100px';
+  const COLS = 'grid-template-columns:50px 110px 70px minmax(150px,1fr) 80px 100px 90px 80px 150px 100px';
+  const finAt = x => { const w = workOf(x, 'finished'); return w ? fmtDay(w.at) : '–'; };
   const t2 = (v, l, fg) => `<div style="border:1px solid #E3DCE8;border-radius:10px;padding:12px 14px"><div style="font-size:26px;font-weight:800;line-height:1.1;color:${fg}">${v}</div><div style="font-size:14px;color:#5E5566">${l}</div></div>`;
   const sign = role => `<div style="text-align:center;font-size:15px"><div style="border-bottom:1px dotted #5E5566;height:44px"></div><div style="margin-top:6px">${role}</div></div>`;
   return `<div data-scroll="report" class="scroll">
@@ -1442,10 +1451,10 @@ function vReport() {
         ${[['ผู้รับจ้าง', f.contractor], ['ผู้ตรวจรับ', S.me.full_name], ['วันที่นำเข้าข้อมูล', fmtDay(f.imported_at)], ['วันที่ปิดงาน', f.closed_at ? fmtDay(f.closed_at) : 'ยังไม่ปิดงาน']].map(([l, v]) => `<div><div style="font-size:13px;color:#5E5566">${l}</div><div style="font-weight:700">${esc(v)}</div></div>`).join('')}</div>
       <div data-rtiles style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px">${t2(f.segments.length, 'ช่วงงานตัด', '#1C1324')}${t2(st.km.toFixed(2), 'ระยะทาง (กม.)', '#1C1324')}${t2(st.passN + '/' + f.segments.length, 'ช่วงที่ผ่าน', '#2E7D32')}${t2(st.ds.length, 'จุดบกพร่องทั้งหมด', '#1C1324')}${t2(st.out + st.rev, 'จุดค้าง (ยังไม่ผ่าน)', st.out + st.rev ? '#C62828' : '#1B5E20')}${t2(st.rounds || '–', 'จำนวนรอบตรวจ', P)}</div>
       <div style="display:flex;flex-direction:column;gap:8px"><div style="font-size:16px;font-weight:800">ผลการตรวจรายช่วง</div>
-        <div data-ptable style="overflow-x:auto;border:1px solid #E3DCE8;border-radius:10px"><div style="min-width:860px">
-          <div class="prow" style="display:grid;${COLS};gap:8px;padding:10px 12px;background:#F1E7F6;font-size:13px;font-weight:800;color:#3E0F55"><span>ช่วง</span><span>แรงดัน</span><span>ต้น</span><span>ความหนาแน่น</span><span>กม.</span><span>จุดบกพร่อง</span><span>รอบตรวจ</span><span>สถานะ</span><span>วันที่ผ่าน</span></div>
-          ${f.segments.map((x, i) => { const ds = dOf(f.id, x.seq), sg = SEG[st.st[i]]; return `<div class="row prow" style="${COLS};padding:10px 12px;font-size:14px"><b>${x.seq}</b><span>${esc(dash(x.voltage))}</span><span>${dash(x.plan_trees)}</span><span>${esc(densText(x))}</span><span>${x.length_km.toFixed(2)}</span><span>${ds.length || '–'}</span><span>${ds.length ? Math.max(...ds.map(y => y.round_no)) : (x.passed_at ? 1 : '–')}</span><span><span style="padding:2px 8px;border-radius:999px;background:${sg.bg};color:${sg.fg};font-weight:700;white-space:nowrap">${sg.glyph} ${sg.label}</span></span><span>${segPassAt(f, x)}</span></div>`; }).join('')}
-          <div class="prow" style="display:grid;${COLS};gap:8px;padding:10px 12px;border-top:2px solid ${P};font-size:14px;font-weight:800"><span>รวม</span><span></span><span>${st.trees}</span><span></span><span>${st.km.toFixed(2)}</span><span>${st.ds.length}</span><span></span><span>ผ่าน ${st.passN}/${f.segments.length}</span><span></span></div>
+        <div data-ptable style="overflow-x:auto;border:1px solid #E3DCE8;border-radius:10px"><div style="min-width:960px">
+          <div class="prow" style="display:grid;${COLS};gap:8px;padding:10px 12px;background:#F1E7F6;font-size:13px;font-weight:800;color:#3E0F55"><span>ช่วง</span><span>แรงดัน</span><span>ต้น</span><span>ความหนาแน่น</span><span>กม.</span><span>แจ้งตัดเสร็จ</span><span>จุดบกพร่อง</span><span>รอบตรวจ</span><span>สถานะ</span><span>วันที่ผ่าน</span></div>
+          ${f.segments.map((x, i) => { const ds = dOf(f.id, x.seq), sg = SEG[st.st[i]]; return `<div class="row prow" style="${COLS};padding:10px 12px;font-size:14px"><b>${x.seq}</b><span>${esc(dash(x.voltage))}</span><span>${dash(x.plan_trees)}</span><span>${esc(densText(x))}</span><span>${x.length_km.toFixed(2)}</span><span>${finAt(x)}</span><span>${ds.length || '–'}</span><span>${ds.length ? Math.max(...ds.map(y => y.round_no)) : (x.passed_at ? 1 : '–')}</span><span><span style="padding:2px 8px;border-radius:999px;background:${sg.bg};color:${sg.fg};font-weight:700;white-space:nowrap">${sg.glyph} ${sg.label}</span></span><span>${segPassAt(f, x)}</span></div>`; }).join('')}
+          <div class="prow" style="display:grid;${COLS};gap:8px;padding:10px 12px;border-top:2px solid ${P};font-size:14px;font-weight:800"><span>รวม</span><span></span><span>${st.trees}</span><span></span><span>${st.km.toFixed(2)}</span><span>${st.cutN}/${f.segments.length}</span><span>${st.ds.length}</span><span></span><span>ผ่าน ${st.passN}/${f.segments.length}</span><span></span></div>
         </div></div></div>
       <div class="psign" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:24px;margin-top:12px">${sign('ผู้ตรวจรับ')}${sign('ผู้รับจ้าง')}</div>
     </div></div></div>`;
