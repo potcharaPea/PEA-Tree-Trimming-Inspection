@@ -196,11 +196,25 @@ const db = {
   signOut: () => LIVE ? sb.auth.signOut() : null,
   // ── ภาพรวมทุกการไฟฟ้า (ไม่ต้องล็อกอิน): [{office_id, office_name, code, line_name, contractor, closed_at, out_n, rev_n, def_n, segs:[{seq,km,st}]}] ──
   async overview() {
-    if (!LIVE) return S.feeders.map(f => { const st = fStats(f); return { office_id: f.office, office_name: officeName(f.office), code: f.code, line_name: f.line, contractor: f.contractor, closed_at: f.closed_at,
+    if (!LIVE) return S.feeders.map(f => { const st = fStats(f); return { id: f.id, office_id: f.office, office_name: officeName(f.office), code: f.code, line_name: f.line, contractor: f.contractor, closed_at: f.closed_at,
       out_n: st.out, rev_n: st.rev, def_n: st.ds.length, segs: f.segments.map((s, i) => ({ seq: s.seq, km: s.length_km, st: st.st[i] })) }; });
     const { data, error } = await sb.rpc('public_overview');
     if (error) fail(error, 'overview');
     return data.map(r => ({ ...r, segs: r.segs.map(s => ({ ...s, km: +s.km })) }));
+  },
+  // ── ไส้ในงาน 1 Feeder (ไม่ต้องล็อกอิน) → { feeder, defects } รูปแบบเดียวกับ fetchAll ──
+  async publicFeeder(id) {
+    if (!LIVE) return { feeder: S.feeders.find(f => f.id === id), defects: S.defects.filter(d => d.feeder_id === id) };
+    const { data: x, error } = await sb.rpc('public_feeder', { fid: id });
+    if (error) fail(error, 'publicFeeder'); if (!x) throw new Error('ไม่พบงานนี้');
+    const paths = [...x.segments.flatMap(s => s.works), ...x.defects.flatMap(d => d.events)].flatMap(e => (e.photos || []).map(p => p.path)).filter(Boolean), urls = {};
+    if (paths.length) (await q(sb.storage.from('photos').createSignedUrls(paths, 3600), 'signedUrls')).forEach(u => { if (u.signedUrl) urls[u.path] = u.signedUrl; });
+    const ph = ps => (ps || []).map(p => ({ ...p, url: urls[p.path] || null })), seqOf = {};
+    const segments = x.segments.map(s => (seqOf[s.id] = s.seq, { ...s, length_km: +s.length_km, coords: s.geom.coordinates.map(c => [c[1], c[0]]), pending: false,
+      works: s.works.map(w => ({ ...w, note: w.note || '', photos: ph(w.photos), pending: false })) }));
+    return { feeder: { id: x.id, code: x.code, line: x.line, office: x.office, contractor_id: null, contractor: x.contractor || '–', closed_at: x.closed_at, imported_at: x.imported_at, segments },
+      defects: x.defects.map(d => ({ id: d.id, code: pad4(d.code_no), feeder_id: x.id, segment_id: d.segment_id, seq: seqOf[d.segment_id], lat: d.lat, lng: d.lng, issue_type: d.issue_type, status: d.status, round_no: d.round_no,
+        events: d.events.map(e => ({ kind: e.kind, round_no: e.round_no, at: e.at, note: e.note || '', pending: false, who: e.who || '', photos: ph(e.photos) })) })) };
   },
   // ── โหลดทุกอย่างที่ผู้ใช้เห็นได้ (RLS กรองให้แล้ว) ──
   async load() {
@@ -511,7 +525,9 @@ const S = Object.assign(LIVE ? { feeders: [], defects: [], user: null, gpsErr: n
   base:'osm', legend:true, imp:{ step:'pick' }, wide:true, seq:432
 });
 function set(patch) { Object.assign(S, typeof patch === 'function' ? patch(S) : patch); render(); }
-const isInsp = () => S.me && S.me.role === 'inspector';
+// RO = ดูไส้ในงานจากหน้าภาพรวม (ดูอย่างเดียว): แสดงแบบผู้ตรวจ แต่ซ่อนปุ่มแก้ไขทุกปุ่ม
+const RO = () => !!S.pubView;
+const isInsp = () => RO() || !!(S.me && S.me.role === 'inspector');
 const myName = () => isInsp() ? S.me.full_name + ' (ผู้ตรวจ)' : S.me.company;
 
 // ── geo / format helpers ──
@@ -581,7 +597,8 @@ async function run(work) {
     showToast(S.err, 'err', 6000);
   }
 }
-async function refresh() { try { await db.load(); render(); } catch (e) { showToast('โหลดข้อมูลไม่สำเร็จ: ' + e.message, 'err', 6000); } }
+// กำลังดูไส้ในงานสาธารณะ (RO): ไม่โหลดทับด้วยข้อมูลของบัญชีตน
+async function refresh() { if (RO()) return; try { await db.load(); render(); } catch (e) { showToast('โหลดข้อมูลไม่สำเร็จ: ' + e.message, 'err', 6000); } }
 async function login() {
   if (!S.loginId.trim() || !S.password) return set({ loginErr: 'กรุณากรอกชื่อผู้ใช้และรหัสผ่าน' });
   if (LIVE && !S.online) return set({ loginErr: 'ไม่มีสัญญาณ — เข้าสู่ระบบครั้งแรกต้องออนไลน์' });
@@ -609,6 +626,7 @@ async function logout() {
   // ออกจากระบบตอนยังมีของรอส่ง = ข้อมูลหาย → ไม่ให้ออก
   if (LIVE && S.queue) return showToast('ยังมีข้อมูลรอส่ง ' + S.queue + ' รายการ — ต่อเน็ตให้ส่งครบก่อนออกจากระบบ', 'err', 6000);
   clearTimeout(rtT); db.unsubscribe(); await db.signOut(); if (LIVE) await snap.clear();
+  if (RO()) Object.assign(S, S.pubBak, { pubView: false, pubBak: null });
   set({ me: null, screen: 'login', showNotif: false, sheet: null, draft: null, ...(LIVE ? { feeders: [], defects: [], notifs: [], unread: 0 } : {}) });
 }
 // ── GPS (LIVE) — ponytail: โหมดสาธิตใช้ตำแหน่งจำลองคงที่ ──
@@ -975,7 +993,7 @@ function vHeader() {
   if (S.screen === 'login') return '';
   const f = curF(), insp = isInsp();
   const t = { dash: ['ระบบตรวจรับงานตัดต้นไม้', insp ? 'ผู้ตรวจงาน' : 'ผู้รับจ้าง'],
-    import: ['นำเข้า Feeder', 'เลือกโฟลเดอร์ KMZ'], overview: ['ภาพรวมทุกการไฟฟ้า', 'ดูอย่างเดียว'], admin: ['จัดการระบบ', 'ผู้ดูแลระบบ'], feeder: [f && f.code, f && f.line], report: ['รายงานสรุป ' + (f ? f.code : ''), f && f.line], fdash: ['ความคืบหน้า ' + (f ? f.code : ''), f && f.line] }[S.screen] || ['', ''];
+    import: ['นำเข้า Feeder', 'เลือกโฟลเดอร์ KMZ'], overview: ['ภาพรวมทุกการไฟฟ้า', 'ดูอย่างเดียว'], admin: ['จัดการระบบ', 'ผู้ดูแลระบบ'], feeder: [f && f.code, f && (f.line + (RO() ? ' · ดูอย่างเดียว' : ''))], report: ['รายงานสรุป ' + (f ? f.code : ''), f && f.line], fdash: ['ความคืบหน้า ' + (f ? f.code : ''), f && f.line] }[S.screen] || ['', ''];
   const net = S.online ? { bg: 'rgba(255,255,255,.14)', fg: '#fff', dot: '#7CE08A', label: 'ออนไลน์' } : { bg: '#FFE082', fg: '#2B2230', dot: '#2B2230', label: 'ออฟไลน์' };
   const banner = !S.online ? { bg: '#2B2230', fg: '#FFE082', icon: '!', text: S.queue ? 'ออฟไลน์ — บันทึกไว้ในเครื่อง ' + S.queue + ' รายการ รอส่ง' : 'ออฟไลน์ — ข้อมูลที่บันทึกจะเก็บไว้ในเครื่อง รอส่ง' }
     : S.syncing ? { bg: '#FFEFD6', fg: '#7A3B00', icon: '↻', text: 'กลับมาออนไลน์ — กำลังส่ง ' + S.queue + ' รายการ…' }
@@ -988,7 +1006,7 @@ function vHeader() {
       <div style="font-size:13px;line-height:1.3;opacity:.92;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(t[1])}</div>
     </div>
     <button data-act="toggleOnline" title="${LIVE ? (S.queue ? 'แตะเพื่อส่งข้อมูลที่ค้าง' : 'สถานะเครือข่าย') : 'แตะเพื่อจำลองสถานะเครือข่าย'}" style="flex:none;height:36px;padding:0 12px;border-radius:18px;border:1.5px solid rgba(255,255,255,.6);background:${net.bg};color:${net.fg};font-size:14px;font-weight:700;display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:${net.dot}"></span>${net.label}</button>
-    ${insp ? `<button data-act="toggleNotif" aria-label="การแจ้งเตือน" style="flex:none;position:relative;width:44px;height:44px;border:0;border-radius:22px;background:transparent;color:#fff;display:flex;align-items:center;justify-content:center">
+    ${insp && S.me && !RO() ? `<button data-act="toggleNotif" aria-label="การแจ้งเตือน" style="flex:none;position:relative;width:44px;height:44px;border:0;border-radius:22px;background:transparent;color:#fff;display:flex;align-items:center;justify-content:center">
       <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
       ${S.unread ? `<span style="position:absolute;top:3px;right:1px;min-width:20px;height:20px;padding:0 5px;border-radius:10px;background:#FFD54F;color:#2B2230;font-size:12px;font-weight:800;display:flex;align-items:center;justify-content:center;border:2px solid ${P}">${S.unread}</span>` : ''}</button>` : ''}
     ${S.me ? `<button data-act="logout" style="flex:none;height:40px;padding:0 8px;border:0;background:transparent;color:#fff;font-size:14px;font-weight:600;text-decoration:underline">ออก</button>` : ''}
@@ -1272,7 +1290,7 @@ function vFeeder() {
     ${L1('รอแก้ไข', sq('#C62828', '!', '50%', 11))}${L1('รอตรวจ', sq('#E87500', '⧗', '5px', 10))}${L1('ไม่ผ่าน ส่งกลับ', sq('#7F1D1D', '✕', '2px', 11))}${L1('ผ่าน', sq('#2E7D32', '✓', '50%', 11))}
     ${L1('ตำแหน่งของฉัน', '<span style="width:14px;height:14px;margin:0 2px;border-radius:50%;background:#1565C0;border:2px solid #fff;box-shadow:0 0 0 3px rgba(21,101,192,.3)"></span>')}</div>` : '';
   const mapBtn = 'width:48px;height:48px;border:0;border-radius:12px;background:#fff;box-shadow:0 2px 8px rgba(28,19,36,.22);display:flex;align-items:center;justify-content:center';
-  const showFab = insp && !S.sheet && !f.closed_at && (wide || mode !== 'segment'), showPeek = !wide && !listOn && mode === 'segment' && !S.sheet;
+  const showFab = insp && !RO() && !S.sheet && !f.closed_at && (wide || mode !== 'segment'), showPeek = !wide && !listOn && mode === 'segment' && !S.sheet;
   const mapCol = `<div style="position:relative;min-height:0;display:${wide || !listOn ? 'block' : 'none'}"><div data-slot="map"></div>
     <div style="position:absolute;top:10px;left:10px;z-index:1001;display:flex;flex-direction:column;gap:6px;align-items:flex-start">
       <button data-act="toggleLegend" style="height:40px;padding:0 12px;border:0;border-radius:10px;background:#fff;color:#1C1324;font-size:14px;font-weight:700;box-shadow:0 2px 8px rgba(28,19,36,.2)">สัญลักษณ์ ${S.legend ? '▴' : '▾'}</button>${legend}</div>
@@ -1285,7 +1303,7 @@ function vFeeder() {
         <div style="flex:1;min-width:0"><div style="font-size:18px;font-weight:800;line-height:1.25">ช่วงที่ ${sv.x.seq} · ${sv.x.length_km.toFixed(2)} กม.</div><div style="font-size:14px;color:#5E5566">${esc(sv.short)}</div></div>
         <button data-act="clearSeg" aria-label="ปิด" style="flex:none;width:44px;height:44px;border:0;border-radius:22px;background:#F6F3F8;font-size:18px;color:#1C1324">✕</button></div>
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">${pill(sv.st, ';font-size:14px;font-weight:800;padding:3px 10px')}<span style="font-size:14px;color:#4A3F52">${sv.summary}</span></div>
-      ${insp ? (f.closed_at ? '' : `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">${passBtn(sv, 52)}${pinBtn(sv, 52)}</div>`) : workBtn(f, sv.x, 52)}
+      ${RO() ? '' : insp ? (f.closed_at ? '' : `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">${passBtn(sv, 52)}${pinBtn(sv, 52)}</div>`) : workBtn(f, sv.x, 52)}
       <button data-act="viewList" style="height:44px;border:0;background:transparent;color:${P};font-size:15px;font-weight:700;text-decoration:underline">ดูรายละเอียดช่วงและจุดบกพร่อง ›</button></div>` : ''}
   </div>`;
   // ── แผงขวา: รายการ / ช่วง / จุด ──
@@ -1301,7 +1319,7 @@ function vFeeder() {
         <div style="display:flex;flex-direction:column;gap:8px"><div style="font-size:16px;font-weight:800">จุดบกพร่องในช่วงนี้ (${sv.ds.length})</div>
           ${sv.ds.map(itemOf).map(it => `<div data-act="openDefect" data-arg="${esc(it.x.id)}" style="display:flex;gap:12px;align-items:center;padding:12px;border:1px solid #E3DCE8;border-radius:12px;cursor:pointer;background:${it.rowBg}">${defIco(it.k, 36, 17)}<div style="flex:1;min-width:0"><div style="font-size:16px;font-weight:700">${esc(it.x.issue_type)}</div><div style="font-size:14px;color:#5E5566"><span class="mono">${esc(it.x.code)}</span> · <b style="color:${it.k.fg}">${it.k.label}</b> · ตรวจครั้งที่ ${it.x.round_no}</div></div><span style="flex:none;font-size:24px;color:#9A8FA3">›</span></div>`).join('')}
           ${sv.ds.length ? '' : '<div style="padding:16px;border:2px dashed #DDD5E2;border-radius:12px;text-align:center;color:#5E5566;font-size:15px">ยังไม่มีจุดบกพร่องในช่วงนี้</div>'}</div></div>` +
-      footBox((insp && f.closed_at ? `<div style="font-size:14px;font-weight:700;color:#1B5E20;text-align:center">✓ ปิดงาน Feeder นี้แล้ว</div>` : insp ? (sv.out > 0 || sv.passed ? `<div style="font-size:14px;font-weight:700;color:${sv.passed ? '#1B5E20' : '#8E1B1B'};text-align:center">${sv.passed ? '✓ ช่วงนี้ผ่านแล้ว' : 'ยังมีจุดบกพร่องค้าง ' + sv.out + ' จุด — ผ่านทั้งช่วงไม่ได้'}</div>` : '') + `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">${passBtn(sv, 56)}${pinBtn(sv, 56)}</div>` : workBtn(f, x, 56)) +
+      footBox((RO() ? '' : insp && f.closed_at ? `<div style="font-size:14px;font-weight:700;color:#1B5E20;text-align:center">✓ ปิดงาน Feeder นี้แล้ว</div>` : insp ? (sv.out > 0 || sv.passed ? `<div style="font-size:14px;font-weight:700;color:${sv.passed ? '#1B5E20' : '#8E1B1B'};text-align:center">${sv.passed ? '✓ ช่วงนี้ผ่านแล้ว' : 'ยังมีจุดบกพร่องค้าง ' + sv.out + ' จุด — ผ่านทั้งช่วงไม่ได้'}</div>` : '') + `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">${passBtn(sv, 56)}${pinBtn(sv, 56)}</div>` : workBtn(f, x, 56)) +
         `<button data-act="nav" data-arg="${mid[0]},${mid[1]}" class="bnav">นำทางไปช่วงนี้ · ${fmtDist(segDist(x))}</button>`);
   } else if (dDef) {
     const x = dDef, k = DEF[x.status], found = x.events[0], fixes = x.events.filter(h => h.kind === 'fix_submitted'), lastFix = fixes[fixes.length-1];
@@ -1329,7 +1347,7 @@ function vFeeder() {
               ${hasAfter ? big(lastFix.photos[0], 'g') : '<div style="aspect-ratio:3/4;border-radius:10px;border:2px dashed #C9BED1;display:flex;align-items:center;justify-content:center;text-align:center;padding:10px;font-size:14px;color:#5E5566">ยังไม่มีรูปหลังแก้ไข</div>'}</div></div></div>
         <div style="display:flex;flex-direction:column;gap:12px"><div style="font-size:17px;font-weight:800">ประวัติการตรวจ</div><div>${tl}</div></div></div>` +
       footBox((info ? `<div style="font-size:15px;font-weight:700;color:${infoFg};text-align:center">${info}</div>` : '') +
-        (insp && x.status === 'submitted' ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><button data-act="startReject" style="height:56px;border:2px solid #7F1D1D;border-radius:12px;background:#fff;color:#7F1D1D;font-size:16px;font-weight:800">✕ ไม่ผ่าน ส่งกลับ</button><button data-act="passDefect" style="height:56px;border:0;border-radius:12px;background:#2E7D32;color:#fff;font-size:17px;font-weight:800">✓ ผ่าน</button></div>` : '') +
+        (insp && !RO() && x.status === 'submitted' ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><button data-act="startReject" style="height:56px;border:2px solid #7F1D1D;border-radius:12px;background:#fff;color:#7F1D1D;font-size:16px;font-weight:800">✕ ไม่ผ่าน ส่งกลับ</button><button data-act="passDefect" style="height:56px;border:0;border-radius:12px;background:#2E7D32;color:#fff;font-size:17px;font-weight:800">✓ ผ่าน</button></div>` : '') +
         (!insp && (x.status === 'open' || x.status === 'rejected') ? `<button data-act="startFix" data-arg="${esc(x.id)}" class="bp" style="height:56px;font-size:17px;font-weight:800">ส่งหลักฐานการแก้ไข</button>` : '') +
         `<button data-act="nav" data-arg="${x.lat},${x.lng}" class="bnav">นำทางด้วย Google Maps · ${fmtDist(distTo(x.lat, x.lng))}</button>`);
   } else {
@@ -1343,7 +1361,7 @@ function vFeeder() {
     if (!insp && !isWork) groups.sort((a, b) => (a.dist ?? Infinity) - (b.dist ?? Infinity));
     panel = `<div style="flex:none;padding:14px 16px 12px;border-bottom:1px solid #ECE6EF;display:flex;flex-direction:column;gap:10px">
         <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap"><div style="font-size:18px;font-weight:800">${insp ? 'ช่วงงานตัด ' + f.segments.length + ' ช่วง' : isWork ? 'งานตัดต้นไม้' : 'จุดที่ต้องแก้ไข'}</div><div style="font-size:14px;color:#5E5566">${isWork ? 'ตัดเสร็จ ' + st.cutN + '/' + f.segments.length + ' ช่วง' : 'ผ่าน ' + st.passN + '/' + f.segments.length + ' ช่วง'} · ${st.km.toFixed(2)} กม.</div></div>
-        ${insp ? (() => { const go = st.allPass && !f.closed_at; return `<button data-act="report" data-arg="${esc(f.id)}" class="${go ? '' : 'bo'}" style="height:44px;border-radius:10px;font-size:15px;font-weight:800${go ? ';border:0;background:#2E7D32;color:#fff' : ''}">${go ? '✓ ตรวจครบทุกช่วงแล้ว · รายงาน / ปิดงาน' : 'รายงานสรุป'}</button>`; })() : ''}
+        ${insp && !RO() ? (() => { const go = st.allPass && !f.closed_at; return `<button data-act="report" data-arg="${esc(f.id)}" class="${go ? '' : 'bo'}" style="height:44px;border-radius:10px;font-size:15px;font-weight:800${go ? ';border:0;background:#2E7D32;color:#fff' : ''}">${go ? '✓ ตรวจครบทุกช่วงแล้ว · รายงาน / ปิดงาน' : 'รายงานสรุป'}</button>`; })() : ''}
         <div style="height:8px;border-radius:4px;background:#EFEAF2;overflow:hidden"><div style="height:100%;width:${isWork ? Math.round(st.cutN / (f.segments.length || 1) * 100) : st.pct}%;background:${isWork ? SEG.cut.solid : '#2E7D32'}"></div></div>
         ${insp ? '' : isWork ? `<div style="font-size:14px;color:${SEG.cut.fg};background:${SEG.cutting.bg};border-radius:10px;padding:8px 12px">แต่ละช่วง: กด <b>เริ่มตัด</b> ก่อนลงมือ (รูปก่อนตัด ≥ 1) และ <b>แจ้งตัดเสร็จ</b> เมื่อตัดครบช่วง (รูปหลังตัด ≥ 4: ต้นช่วง · กลางช่วง · ปลายช่วง · การเก็บกิ่ง) · ถ่ายที่หน้างาน ระบบบันทึกพิกัด GPS</div>` : '<div style="font-size:14px;color:#3E0F55;background:#F1E7F6;border-radius:10px;padding:8px 12px">จัดกลุ่มตามช่วง เรียงตามระยะทางจากตำแหน่งปัจจุบันของคุณ</div>'}
         <div style="display:flex;gap:8px;overflow-x:auto;padding-bottom:2px">${chipDefs.map(([k, label, fn]) => chipBtn(k === cd[0], label + ' · ' + (k === 'all' ? f.segments.length + ' ช่วง' : k === 'work' ? st.cutN + '/' + f.segments.length : st.ds.filter(fn).length), 'chip', k, CHIP_FILTER)).join('')}</div></div>
@@ -1391,14 +1409,15 @@ function vOverview() {
       <b>${esc(of.name)}</b><b style="color:#00585F">${rs.length ? s.cutPct + '%' : '–'}</b><b style="color:#1B5E20">${rs.length ? s.passPct + '%' : '–'}</b><b style="color:${s.out ? '#C62828' : '#5E5566'}">${s.out}</b>
       <span>${s.closed}/${s.n}</span><span>${s.n}</span><span>${s.km.toFixed(1)}</span><span>${rs.length ? ovBar(rs.flatMap(r => r.segs), 14) : '<span style="color:#9A8FA3">ยังไม่มีงาน</span>'}</span></div>`; };
   const card = r => { const s = ovSum([r]), st = FEED[ovStatus(r)];
-    return `<div class="card" style="gap:10px">
+    return `<div class="card" data-act="ovOpen" data-arg="${esc(r.id)}" style="gap:10px;cursor:pointer">
       <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start"><div style="min-width:0">
         <div class="mono" style="font-weight:700;font-size:19px;color:${P}">${esc(r.code)}</div><div style="font-size:16px;font-weight:700">${esc(r.line_name)}</div>
         <div style="font-size:14px;color:#5E5566">${esc(r.office_name)} · ${esc(r.contractor || '–')}</div></div>${pill(st, ';flex:none')}</div>
       ${ovBar(r.segs, 12)}
       <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;font-size:13px;color:#5E5566;text-align:center">
         <div><b style="display:block;font-size:17px;color:#1C1324">${r.segs.length} · ${s.km.toFixed(1)}</b>ช่วง · กม.</div><div><b style="display:block;font-size:17px;color:#00585F">${s.cutPct}%</b>ตัดแล้ว</div>
-        <div><b style="display:block;font-size:17px;color:#1B5E20">${s.passPct}%</b>ผ่าน</div><div><b style="display:block;font-size:17px;color:${r.out_n ? '#C62828' : '#5E5566'}">${r.out_n}</b>จุดค้างแก้</div></div></div>`; };
+        <div><b style="display:block;font-size:17px;color:#1B5E20">${s.passPct}%</b>ผ่าน</div><div><b style="display:block;font-size:17px;color:${r.out_n ? '#C62828' : '#5E5566'}">${r.out_n}</b>จุดค้างแก้</div></div>
+      <div style="text-align:right;font-size:15px;font-weight:700;color:${P}">${S.busy ? 'กำลังเปิด…' : 'ดูแผนที่ รูปถ่าย จุดบกพร่อง ›'}</div></div>`; };
   return `<div data-scroll="overview" class="scroll"><div style="max-width:1200px;margin:0 auto;padding:20px 16px 40px;display:flex;flex-direction:column;gap:16px">
     <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap">
       <div><div style="font-size:15px;color:#5E5566">ดูอย่างเดียว · ไม่ต้องเข้าสู่ระบบ</div><div style="font-size:26px;font-weight:800;line-height:1.25">ภาพรวมงานตัดต้นไม้ทุกการไฟฟ้า</div>
@@ -1638,7 +1657,16 @@ const ACT = {
   toggleOnline: () => LIVE ? flush() : toggleOnline(), toggleNotif: () => set({ showNotif: !S.showNotif, unread: 0 }),
   goOverview() { set({ screen: 'overview', ov: { rows: null, office: '', at: null, loading: false, err: null } }); ovLoad(); },
   ovRefresh: () => ovLoad(), ovOffice: id => set({ ov: { ...S.ov, office: id === S.ov.office ? '' : id } }),
-  back() { if (S.screen === 'overview') return set({ screen: S.me ? 'dash' : 'login' }); if (S.screen === 'admin') return logout(); if (S.sheet) return closeSheet(); if (S.screen === 'feeder' && S.panel.mode !== 'list') return panelBack(); if (S.screen === 'report') return openFeeder(S.cur); set({ screen: 'dash', cur: null, imp: { step: 'pick' } }); },
+  async ovOpen(id) {
+    if (S.busy) return; set({ busy: true });
+    let d; try { d = await db.publicFeeder(id); } catch (e) { S.busy = false; return showToast(isNetErr(e) ? 'ไม่มีสัญญาณ — ต้องออนไลน์' : 'เปิดงานไม่สำเร็จ: ' + e.message, 'err', 6000); }
+    // สลับข้อมูลชั่วคราว (คืนตอนออก) — ข้อมูลของบัญชีที่ล็อกอินอยู่ไม่หาย
+    Object.assign(S, { busy: false, pubBak: { feeders: S.feeders, defects: S.defects }, pubView: true, feeders: [d.feeder], defects: d.defects });
+    openFeeder(id);
+  },
+  back() {
+    if (RO()) { if (S.panel.mode !== 'list') return panelBack(); Object.assign(S, S.pubBak, { pubView: false, pubBak: null }); return set({ screen: 'overview', cur: null }); }
+    if (S.screen === 'overview') return set({ screen: S.me ? 'dash' : 'login' }); if (S.screen === 'admin') return logout(); if (S.sheet) return closeSheet(); if (S.screen === 'feeder' && S.panel.mode !== 'list') return panelBack(); if (S.screen === 'report') return openFeeder(S.cur); set({ screen: 'dash', cur: null, imp: { step: 'pick' } }); },
   goImport: () => set({ screen: 'import', imp: { step: 'pick' } }),
   openFeeder, report: id => set({ screen: 'report', cur: id }), fdash: id => set({ screen: 'fdash', cur: id }),
   segOnMap(seq) { openFeeder(S.cur); selectSeg(+seq); },
