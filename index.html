@@ -194,6 +194,14 @@ const db = {
     return p;
   },
   signOut: () => LIVE ? sb.auth.signOut() : null,
+  // ── ภาพรวมทุกการไฟฟ้า (ไม่ต้องล็อกอิน): [{office_id, office_name, code, line_name, contractor, closed_at, out_n, rev_n, def_n, segs:[{seq,km,st}]}] ──
+  async overview() {
+    if (!LIVE) return S.feeders.map(f => { const st = fStats(f); return { office_id: f.office, office_name: officeName(f.office), code: f.code, line_name: f.line, contractor: f.contractor, closed_at: f.closed_at,
+      out_n: st.out, rev_n: st.rev, def_n: st.ds.length, segs: f.segments.map((s, i) => ({ seq: s.seq, km: s.length_km, st: st.st[i] })) }; });
+    const { data, error } = await sb.rpc('public_overview');
+    if (error) fail(error, 'overview');
+    return data.map(r => ({ ...r, segs: r.segs.map(s => ({ ...s, km: +s.km })) }));
+  },
   // ── โหลดทุกอย่างที่ผู้ใช้เห็นได้ (RLS กรองให้แล้ว) ──
   async load() {
     if (!LIVE) return;
@@ -967,7 +975,7 @@ function vHeader() {
   if (S.screen === 'login') return '';
   const f = curF(), insp = isInsp();
   const t = { dash: ['ระบบตรวจรับงานตัดต้นไม้', insp ? 'ผู้ตรวจงาน' : 'ผู้รับจ้าง'],
-    import: ['นำเข้า Feeder', 'เลือกโฟลเดอร์ KMZ'], admin: ['จัดการระบบ', 'ผู้ดูแลระบบ'], feeder: [f && f.code, f && f.line], report: ['รายงานสรุป ' + (f ? f.code : ''), f && f.line], fdash: ['ความคืบหน้า ' + (f ? f.code : ''), f && f.line] }[S.screen] || ['', ''];
+    import: ['นำเข้า Feeder', 'เลือกโฟลเดอร์ KMZ'], overview: ['ภาพรวมทุกการไฟฟ้า', 'ดูอย่างเดียว'], admin: ['จัดการระบบ', 'ผู้ดูแลระบบ'], feeder: [f && f.code, f && f.line], report: ['รายงานสรุป ' + (f ? f.code : ''), f && f.line], fdash: ['ความคืบหน้า ' + (f ? f.code : ''), f && f.line] }[S.screen] || ['', ''];
   const net = S.online ? { bg: 'rgba(255,255,255,.14)', fg: '#fff', dot: '#7CE08A', label: 'ออนไลน์' } : { bg: '#FFE082', fg: '#2B2230', dot: '#2B2230', label: 'ออฟไลน์' };
   const banner = !S.online ? { bg: '#2B2230', fg: '#FFE082', icon: '!', text: S.queue ? 'ออฟไลน์ — บันทึกไว้ในเครื่อง ' + S.queue + ' รายการ รอส่ง' : 'ออฟไลน์ — ข้อมูลที่บันทึกจะเก็บไว้ในเครื่อง รอส่ง' }
     : S.syncing ? { bg: '#FFEFD6', fg: '#7A3B00', icon: '↻', text: 'กลับมาออนไลน์ — กำลังส่ง ' + S.queue + ' รายการ…' }
@@ -983,7 +991,7 @@ function vHeader() {
     ${insp ? `<button data-act="toggleNotif" aria-label="การแจ้งเตือน" style="flex:none;position:relative;width:44px;height:44px;border:0;border-radius:22px;background:transparent;color:#fff;display:flex;align-items:center;justify-content:center">
       <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
       ${S.unread ? `<span style="position:absolute;top:3px;right:1px;min-width:20px;height:20px;padding:0 5px;border-radius:10px;background:#FFD54F;color:#2B2230;font-size:12px;font-weight:800;display:flex;align-items:center;justify-content:center;border:2px solid ${P}">${S.unread}</span>` : ''}</button>` : ''}
-    <button data-act="logout" style="flex:none;height:40px;padding:0 8px;border:0;background:transparent;color:#fff;font-size:14px;font-weight:600;text-decoration:underline">ออก</button>
+    ${S.me ? `<button data-act="logout" style="flex:none;height:40px;padding:0 8px;border:0;background:transparent;color:#fff;font-size:14px;font-weight:600;text-decoration:underline">ออก</button>` : ''}
   </div>
   ${banner ? `<div data-noprint style="flex:none;display:flex;align-items:center;gap:10px;padding:10px 16px;background:${banner.bg};color:${banner.fg};font-size:15px;font-weight:700;position:relative;z-index:1050"><span style="flex:none;width:24px;height:24px;border-radius:50%;border:2px solid currentColor;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:800">${banner.icon}</span><span style="flex:1">${banner.text}</span></div>` : ''}`;
 }
@@ -1001,6 +1009,7 @@ function vLogin() {
     <div style="background:${P};color:#fff;padding:40px 24px 64px"><div style="max-width:440px;margin:0 auto;display:flex;flex-direction:column;gap:18px">
       <div style="width:64px;height:64px;border-radius:16px;background:#fff;color:${P};display:flex;align-items:center;justify-content:center;font-weight:800;font-size:19px">กฟภ.</div>
       <div><div style="font-size:28px;font-weight:800;line-height:1.25;text-wrap:pretty">ระบบตรวจรับงานตัดต้นไม้</div><div style="font-size:16px;opacity:.92;margin-top:4px">การไฟฟ้าส่วนภูมิภาค · PEA Tree Trimming Inspection</div></div>
+      <button data-act="goOverview" style="align-self:flex-start;height:44px;padding:0 18px;border:1.5px solid rgba(255,255,255,.75);border-radius:22px;background:rgba(255,255,255,.12);color:#fff;font-size:15px;font-weight:700">ภาพรวมทุกการไฟฟ้า · ดูได้ไม่ต้องเข้าสู่ระบบ ›</button>
     </div></div>
     <div style="max-width:440px;margin:-36px auto 0;padding:0 16px 32px;display:flex;flex-direction:column;gap:16px">
       <div style="background:#fff;border-radius:16px;box-shadow:0 4px 20px rgba(28,19,36,.12);padding:20px;display:flex;flex-direction:column;gap:12px">
@@ -1057,7 +1066,8 @@ function vDash() {
   return `<div data-scroll="dash" class="scroll"><div style="max-width:1200px;margin:0 auto;padding:20px 16px 120px;display:flex;flex-direction:column;gap:18px">
     <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap">
       <div><div style="font-size:15px;color:#5E5566">${insp ? 'ผู้ตรวจงาน' : 'ผู้รับจ้าง'}</div><div style="font-size:26px;font-weight:800;line-height:1.25">${insp ? 'ภาพรวมงานตรวจรับ' : 'งานตัดและงานแก้ไข'}</div></div>
-      ${insp && S.wide ? `<button data-act="goImport" class="bp" style="padding:0 20px;display:flex;align-items:center;gap:8px"><span style="font-size:22px;line-height:1">+</span>นำเข้า Feeder</button>` : ''}</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap"><button data-act="goOverview" class="bo" style="padding:0 18px">ภาพรวมทุกการไฟฟ้า</button>
+      ${insp && S.wide ? `<button data-act="goImport" class="bp" style="padding:0 20px;display:flex;align-items:center;gap:8px"><span style="font-size:22px;line-height:1">+</span>นำเข้า Feeder</button>` : ''}</div></div>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px">${tiles.map(t => tile(t[0], t[1], t[2], true)).join('')}</div>
     <div style="font-size:19px;font-weight:700;margin-top:4px">${insp ? 'Feeder ทั้งหมด' : 'Feeder ที่ได้รับมอบหมาย'}</div>
     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,340px),1fr));gap:14px">${cards || '<div style="color:#5E5566">ยังไม่มี Feeder</div>'}</div>
@@ -1356,6 +1366,59 @@ function vFeeder() {
       ${mapCol}<div style="min-height:0;display:${wide || listOn ? 'flex' : 'none'};flex-direction:column;background:#fff;border-left:1px solid #E3DCE8">${panel}</div></div></div>`;
 }
 
+// ── ภาพรวมทุกการไฟฟ้า: ดูอย่างเดียว ไม่ต้องล็อกอิน (ข้อมูลจาก db.overview) ──
+// ตัดแล้ว = ผู้รับจ้างแจ้งเสร็จ หรือผู้ตรวจตรวจแล้ว · % คิดตามระยะทาง (กม.)
+const OV_DONE = /cut|defect|pass/;
+function ovSum(rows) {
+  const segs = rows.flatMap(r => r.segs), km = k => segs.filter(s => k.test(s.st)).reduce((a, s) => a + s.km, 0), tot = segs.reduce((a, s) => a + s.km, 0);
+  const pct = v => tot ? Math.round(v / tot * 100) : 0;
+  return { n: rows.length, segN: segs.length, km: tot, cutPct: pct(km(OV_DONE)), passPct: pct(km(/pass/)), out: rows.reduce((a, r) => a + r.out_n, 0), rev: rows.reduce((a, r) => a + r.rev_n, 0), closed: rows.filter(r => r.closed_at).length };
+}
+const ovStatus = r => r.closed_at ? 'closed' : r.out_n ? 'waiting' : !r.def_n && !r.segs.some(s => s.st === 'pass') && r.segs.some(s => /cut/.test(s.st)) ? 'cutting' : 'active';
+const ovBar = (segs, h) => `<div style="display:flex;gap:2px;height:${h}px;border-radius:4px;overflow:hidden;background:#EFEAF2">${segs.map(s => `<div title="ช่วงที่ ${s.seq} · ${SEG[s.st].label}" style="flex:${s.km.toFixed(3)} 1 0;background:${SEG_BAR(s.st)}"></div>`).join('')}</div>`;
+async function ovLoad() {
+  set({ ov: { ...S.ov, loading: true, err: null } });
+  try { S.ov.rows = await db.overview(); S.ov.at = nowIso(); } catch (e) { S.ov.err = isNetErr(e) ? 'ไม่มีสัญญาณ — ภาพรวมต้องออนไลน์' : 'โหลดข้อมูลไม่สำเร็จ: ' + e.message; }
+  S.ov.loading = false; render();
+}
+function vOverview() {
+  const o = S.ov, rows = o.rows || [], all = ovSum(rows), sel = o.office, fRows = rows.filter(r => !sel || r.office_id === sel);
+  const offices = S.offices.map(of => ({ of, rs: rows.filter(r => r.office_id === of.id) }));
+  const COLS = 'grid-template-columns:minmax(130px,1.4fr) 64px 70px 60px 64px 64px 70px minmax(140px,1.6fr)';   // ตัวเลขสำคัญก่อน (มือถือเห็นโดยไม่ต้องเลื่อน)
+  const legend = ['pass', 'defect', 'cut', 'cutting', 'none'].map(k => `<span style="display:inline-flex;align-items:center;gap:6px"><span style="width:12px;height:12px;border-radius:3px;background:${SEG_BAR(k)}"></span>${SEG[k].label}</span>`).join('');
+  const offRow = ({ of, rs }) => { const s = ovSum(rs), on = sel === of.id;
+    return `<div data-act="ovOffice" data-arg="${esc(of.id)}" class="row" style="${COLS};align-items:center;cursor:pointer;background:${on ? '#F1E7F6' : '#fff'};${on ? 'box-shadow:inset 4px 0 0 ' + P : ''}">
+      <b>${esc(of.name)}</b><b style="color:#00585F">${rs.length ? s.cutPct + '%' : '–'}</b><b style="color:#1B5E20">${rs.length ? s.passPct + '%' : '–'}</b><b style="color:${s.out ? '#C62828' : '#5E5566'}">${s.out}</b>
+      <span>${s.closed}/${s.n}</span><span>${s.n}</span><span>${s.km.toFixed(1)}</span><span>${rs.length ? ovBar(rs.flatMap(r => r.segs), 14) : '<span style="color:#9A8FA3">ยังไม่มีงาน</span>'}</span></div>`; };
+  const card = r => { const s = ovSum([r]), st = FEED[ovStatus(r)];
+    return `<div class="card" style="gap:10px">
+      <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start"><div style="min-width:0">
+        <div class="mono" style="font-weight:700;font-size:19px;color:${P}">${esc(r.code)}</div><div style="font-size:16px;font-weight:700">${esc(r.line_name)}</div>
+        <div style="font-size:14px;color:#5E5566">${esc(r.office_name)} · ${esc(r.contractor || '–')}</div></div>${pill(st, ';flex:none')}</div>
+      ${ovBar(r.segs, 12)}
+      <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;font-size:13px;color:#5E5566;text-align:center">
+        <div><b style="display:block;font-size:17px;color:#1C1324">${r.segs.length} · ${s.km.toFixed(1)}</b>ช่วง · กม.</div><div><b style="display:block;font-size:17px;color:#00585F">${s.cutPct}%</b>ตัดแล้ว</div>
+        <div><b style="display:block;font-size:17px;color:#1B5E20">${s.passPct}%</b>ผ่าน</div><div><b style="display:block;font-size:17px;color:${r.out_n ? '#C62828' : '#5E5566'}">${r.out_n}</b>จุดค้างแก้</div></div></div>`; };
+  return `<div data-scroll="overview" class="scroll"><div style="max-width:1200px;margin:0 auto;padding:20px 16px 40px;display:flex;flex-direction:column;gap:16px">
+    <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap">
+      <div><div style="font-size:15px;color:#5E5566">ดูอย่างเดียว · ไม่ต้องเข้าสู่ระบบ</div><div style="font-size:26px;font-weight:800;line-height:1.25">ภาพรวมงานตัดต้นไม้ทุกการไฟฟ้า</div>
+        <div style="font-size:14px;color:#5E5566">${o.at ? 'ข้อมูล ณ ' + fmtAt(o.at) : ''}</div></div>
+      <button data-act="ovRefresh" class="bo" ${o.loading ? 'disabled' : ''} style="padding:0 18px">${o.loading ? 'กำลังโหลด…' : 'โหลดข้อมูลล่าสุด'}</button></div>
+    ${o.err ? `<div style="padding:12px 14px;border-radius:12px;background:#FDE7E7;color:#8E1B1B;font-size:15px;font-weight:700">${esc(o.err)}</div>` : ''}
+    ${o.loading && !o.rows ? '<div style="color:#5E5566;padding:20px 0">กำลังโหลดข้อมูล…</div>' : !o.rows ? '' : `
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px">${tile(S.offices.length, 'การไฟฟ้า', P, true)}${tile(all.n, 'Feeder', P, true)}${tile(all.km.toFixed(1), 'ระยะทางรวม (กม.)', '#1C1324', true)}${tile(all.cutPct + '%', 'ตัดแล้ว', '#00636B', true)}${tile(all.passPct + '%', 'ตรวจผ่าน', '#2E7D32', true)}${tile(all.out, 'จุดค้างแก้', all.out ? '#C62828' : '#5E5566', true)}${tile(all.closed + '/' + all.n, 'ปิดงานแล้ว', '#1B5E20', true)}</div>
+    <div class="card" style="gap:10px"><div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:baseline"><div style="font-size:18px;font-weight:800">รายการไฟฟ้า</div><div style="font-size:14px;color:#5E5566">แตะแถวเพื่อดู Feeder ของการไฟฟ้านั้น</div></div>
+      <div style="overflow-x:auto;border:1px solid #E3DCE8;border-radius:10px"><div style="min-width:720px">
+        <div style="display:grid;${COLS};gap:8px;padding:10px 14px;background:#F1E7F6;font-size:13px;font-weight:800;color:#3E0F55"><span>การไฟฟ้า</span><span>ตัดแล้ว</span><span>ผ่าน</span><span>จุดค้าง</span><span>ปิดงาน</span><span>Feeder</span><span>กม.</span><span>สถานะรายช่วง</span></div>
+        ${offices.map(offRow).join('')}</div></div>
+      <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:13px;color:#4A3F52">${legend}</div>
+      <div style="font-size:13px;color:#5E5566">% คิดตามระยะทาง (กม.) · ตัดแล้ว = ผู้รับจ้างแจ้งตัดเสร็จ หรือผู้ตรวจตรวจแล้ว</div></div>
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap"><div style="font-size:19px;font-weight:800">Feeder ${sel ? '· ' + esc(officeName(sel)) : 'ทั้งหมด'} <span class="sub">· ${fRows.length} งาน</span></div>
+      ${sel ? `<button data-act="ovOffice" data-arg="" class="bo" style="height:40px;padding:0 14px;font-size:14px">ดูทุกการไฟฟ้า</button>` : ''}</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,340px),1fr));gap:14px">${fRows.map(card).join('') || '<div style="color:#5E5566">ยังไม่มี Feeder</div>'}</div>`}
+  </div></div>`;
+}
+
 // ── หน้าจัดการระบบ (ผู้ดูแลระบบ) ──
 const ROLE_TH = { inspector: 'ผู้ตรวจ', contractor: 'ผู้รับจ้าง' };
 function vAdmin() {
@@ -1559,7 +1622,7 @@ const shell = document.getElementById('shell');
 function render() {
   const sc = {}; shell.querySelectorAll('[data-scroll]').forEach(el => { sc[el.dataset.scroll] = el.scrollTop; });
   if (/feeder|report|fdash/.test(S.screen) && !curF()) Object.assign(S, { screen: 'dash', cur: null, sheet: null, draft: null, del: null });
-  const f = curF(), screen = S.screen === 'login' ? vLogin() : S.screen === 'dash' ? vDash() : S.screen === 'import' ? vImport() : S.screen === 'admin' ? vAdmin()
+  const f = curF(), screen = S.screen === 'login' ? vLogin() : S.screen === 'overview' ? vOverview() : S.screen === 'dash' ? vDash() : S.screen === 'import' ? vImport() : S.screen === 'admin' ? vAdmin()
     : !f ? '' : S.screen === 'feeder' ? vFeeder() : S.screen === 'report' ? vReport() : S.screen === 'fdash' ? vFDash() : '';
   shell.innerHTML = vHeader() + `<div data-main style="flex:1;min-height:0;position:relative;display:flex;flex-direction:column">${screen}${vSheet()}${vNotif()}${vDelete()}${vWorkConfirm()}${vToast()}</div>`;
   shell.querySelectorAll('[data-scroll]').forEach(el => { if (sc[el.dataset.scroll]) el.scrollTop = sc[el.dataset.scroll]; });
@@ -1573,7 +1636,9 @@ const ACT = {
   login, credits: v => set({ credits: !!v }),
   logout,
   toggleOnline: () => LIVE ? flush() : toggleOnline(), toggleNotif: () => set({ showNotif: !S.showNotif, unread: 0 }),
-  back() { if (S.screen === 'admin') return logout(); if (S.sheet) return closeSheet(); if (S.screen === 'feeder' && S.panel.mode !== 'list') return panelBack(); if (S.screen === 'report') return openFeeder(S.cur); set({ screen: 'dash', cur: null, imp: { step: 'pick' } }); },
+  goOverview() { set({ screen: 'overview', ov: { rows: null, office: '', at: null, loading: false, err: null } }); ovLoad(); },
+  ovRefresh: () => ovLoad(), ovOffice: id => set({ ov: { ...S.ov, office: id === S.ov.office ? '' : id } }),
+  back() { if (S.screen === 'overview') return set({ screen: S.me ? 'dash' : 'login' }); if (S.screen === 'admin') return logout(); if (S.sheet) return closeSheet(); if (S.screen === 'feeder' && S.panel.mode !== 'list') return panelBack(); if (S.screen === 'report') return openFeeder(S.cur); set({ screen: 'dash', cur: null, imp: { step: 'pick' } }); },
   goImport: () => set({ screen: 'import', imp: { step: 'pick' } }),
   openFeeder, report: id => set({ screen: 'report', cur: id }), fdash: id => set({ screen: 'fdash', cur: id }),
   segOnMap(seq) { openFeeder(S.cur); selectSeg(+seq); },

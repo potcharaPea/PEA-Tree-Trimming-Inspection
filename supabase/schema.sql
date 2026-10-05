@@ -224,6 +224,28 @@ create policy works_con_update on segment_works for update to authenticated
   using (actor_id = auth.uid() and can_see_feeder(feeder_id)) with check (actor_id = auth.uid() and can_see_feeder(feeder_id));
 create policy works_con_delete on segment_works for delete to authenticated using (actor_id = auth.uid() and can_see_feeder(feeder_id));
 
+-- ── ภาพรวมทุกการไฟฟ้า (หน้า login, ไม่ต้องล็อกอิน, ดูอย่างเดียว) ──
+-- คืนเฉพาะตัวเลขสรุป + สถานะรายช่วง: ไม่มีรูป พิกัด ชื่อผู้ใช้ หรือหมายเหตุ
+-- สถานะช่วงต้องตรงกับ segSt() ใน index.html: defect > pass > cut > cutting > none
+create or replace function public_overview() returns json
+language sql stable security definer set search_path = public as $$
+  select coalesce(json_agg(x order by x.office_name, x.code), '[]') from (
+    select o.id office_id, o.name office_name, f.code, f.line_name, f.closed_at,
+      (select coalesce(p.company, p.full_name) from feeder_contractors fc join profiles p on p.id = fc.contractor_id where fc.feeder_id = f.id limit 1) contractor,
+      (select count(*) from defects d where d.feeder_id = f.id and d.status in ('open', 'rejected')) out_n,
+      (select count(*) from defects d where d.feeder_id = f.id and d.status = 'submitted') rev_n,
+      (select count(*) from defects d where d.feeder_id = f.id) def_n,
+      (select coalesce(json_agg(json_build_object('seq', s.seq, 'km', s.length_km, 'st',
+        case when exists (select 1 from defects d where d.segment_id = s.id and d.status <> 'passed') then 'defect'
+             when s.passed_at is not null or exists (select 1 from defects d where d.segment_id = s.id) then 'pass'
+             when exists (select 1 from segment_works w where w.segment_id = s.id and w.kind = 'finished') then 'cut'
+             when exists (select 1 from segment_works w where w.segment_id = s.id and w.kind = 'started') then 'cutting'
+             else 'none' end) order by s.seq), '[]') from segments s where s.feeder_id = f.id) segs
+    from feeders f join offices o on o.id = f.office_id) x
+$$;
+revoke all on function public_overview() from public;
+grant execute on function public_overview() to anon, authenticated;
+
 -- ════════════════════════════════════════════════════════════════
 -- STORAGE: bucket "photos" (private)
 --   จุดบกพร่อง: {feeder_code}/{defect_id}/{event_id}_{n}.jpg · งานตัด: {feeder_code}/{segment_id}/{work_id}_{n}.jpg
