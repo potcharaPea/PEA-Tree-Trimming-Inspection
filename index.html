@@ -110,8 +110,11 @@ const DEF = {
   passed:   { label:'ผ่าน',            solid:'#2E7D32', bg:'#E3F2E4', fg:'#1B5E20', glyph:'✓', shape:'50%' },
   rejected: { label:'ไม่ผ่าน ส่งกลับ',  solid:'#7F1D1D', bg:'#F6D5D5', fg:'#6B1414', glyph:'✕', shape:'2px' }
 };
+// ช่วงงานตัด: cutting/cut = งานของผู้รับจ้างก่อนตรวจรับ (สีเขียวอมฟ้า) · ตรวจแล้ว (defect/pass) แสดงผลตรวจแทน
 const SEG = {
-  none:  { label:'ยังไม่ตรวจ',        solid:'#6B6472', bg:'#EEEAF0', fg:'#3F3846', glyph:'–' },
+  none:  { label:'ยังไม่เริ่มตัด',     solid:'#6B6472', bg:'#EEEAF0', fg:'#3F3846', glyph:'–' },
+  cutting:{ label:'กำลังตัด',          solid:'#00838F', bg:'#DDF3F4', fg:'#00585F', glyph:'⚒' },
+  cut:   { label:'ตัดเสร็จ รอตรวจ',    solid:'#00636B', bg:'#C9EAEC', fg:'#00454B', glyph:'✂' },
   defect:{ label:'มีจุดบกพร่องค้าง',  solid:'#C62828', bg:'#FDE7E7', fg:'#8E1B1B', glyph:'!' },
   pass:  { label:'ผ่าน',             solid:'#2E7D32', bg:'#E3F2E4', fg:'#1B5E20', glyph:'✓' }
 };
@@ -127,6 +130,14 @@ const EV = {
   passed:       ['#2E7D32','✓','50%', r => 'ตรวจครั้งที่ ' + r + ' · ผ่าน', 'ตรวจผ่าน'],
   rejected:     ['#7F1D1D','✕','2px', r => 'ตรวจครั้งที่ ' + r + ' · ไม่ผ่าน ส่งกลับแก้ใหม่', 'ไม่ผ่าน ส่งกลับ']
 };
+// งานตัดของผู้รับจ้าง: [หัวข้อ, รูปขั้นต่ำ, รูปสูงสุด, คำแนะนำการถ่าย]
+const WORK = {
+  started: ['เริ่มตัด · รูปก่อนตัด', 1, 10, 'ถ่ายสภาพต้นไม้ก่อนตัด ในแนวสายของช่วงนี้'],
+  finished:['ตัดเสร็จ · รูปหลังตัด', 4, 10, 'อย่างน้อย 4 รูป: ต้นช่วง · กลางช่วง · ปลายช่วง · การเก็บกิ่ง']
+};
+const WORK_FAR_M = 200;          // รูปถ่ายห่างแนวช่วงเกินนี้ = เตือนผู้ตรวจ
+const WORK_OLD_H = 72;           // เวลาถ่าย (EXIF) ก่อนส่งรายงานเกินนี้ (ชม.) = เตือน "รูปเก่า"
+const oldPhoto = (ph, at) => ph.taken && (+new Date(at) - +new Date(ph.taken)) / 36e5 > WORK_OLD_H;
 const TILES = {
   osm: ['https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', '© OpenStreetMap'],
   sat: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', 'Esri']
@@ -190,21 +201,23 @@ const db = {
     S.queue = ops.length;
   },
   async fetchAll() {
-    const [pr, fe, fc, sg, df, ev] = await Promise.all([
+    const [pr, fe, fc, sg, df, ev, wk] = await Promise.all([
       q(sb.from('profiles').select('id,office_id,username,full_name,role,company'), 'profiles'),
       q(sb.from('feeders').select('*').order('code'), 'feeders'),
       q(sb.from('feeder_contractors').select('*'), 'feeder_contractors'),
       q(sb.from('segments').select('*').order('seq'), 'segments'),
       q(sb.from('defects').select('*').order('code_no'), 'defects'),
-      q(sb.from('defect_events').select('*').order('created_at'), 'defect_events')]);
+      q(sb.from('defect_events').select('*').order('created_at'), 'defect_events'),
+      q(sb.from('segment_works').select('*').order('created_at'), 'segment_works')]);
     S.profiles = pr.map(p => ({ ...p, office: p.office_id }));
-    const paths = ev.flatMap(e => (e.photos || []).map(p => p.path)).filter(Boolean);
+    const paths = [...ev, ...wk].flatMap(e => (e.photos || []).map(p => p.path)).filter(Boolean);
     const urls = {};
     if (paths.length) (await q(sb.storage.from('photos').createSignedUrls(paths, 12 * 3600), 'signedUrls')).forEach(u => { if (u.signedUrl) urls[u.path] = u.signedUrl; });
-    const segById = {};
+    const segById = {}, viewPh = ps => (ps || []).map(p => ({ ...p, url: urls[p.path] || null }));
+    const worksOf = sid => wk.filter(w => w.segment_id === sid).map(w => ({ id: w.id, kind: w.kind, at: w.created_at, edited: w.updated_at, note: w.note || '', photos: viewPh(w.photos), who: whoOf(w.actor_id), pending: false }));
     S.feeders = fe.map(f => {
       const cid = (fc.find(x => x.feeder_id === f.id) || {}).contractor_id, con = S.profiles.find(p => p.id === cid);
-      const segments = sg.filter(s => s.feeder_id === f.id).map(s => (segById[s.id] = { ...s, length_km: +s.length_km, coords: s.geom_geojson.coordinates.map(c => [c[1], c[0]]), pending: false }));
+      const segments = sg.filter(s => s.feeder_id === f.id).map(s => (segById[s.id] = { ...s, length_km: +s.length_km, coords: s.geom_geojson.coordinates.map(c => [c[1], c[0]]), pending: false, works: worksOf(s.id) }));
       return { id: f.id, code: f.code, line: f.line_name, office: f.office_id, contractor_id: cid || null, contractor: con ? con.company || con.full_name : '–', closed_at: f.closed_at, imported_at: f.created_at, segments };
     });
     S.defects = df.map(d => ({ id: d.id, code: pad4(d.code_no), feeder_id: d.feeder_id, segment_id: d.segment_id, seq: (segById[d.segment_id] || {}).seq, lat: d.lat, lng: d.lng,
@@ -212,13 +225,14 @@ const db = {
       events: ev.filter(e => e.defect_id === d.id).map(e => ({ id: e.id, kind: e.kind, round_no: e.round_no, at: e.created_at, note: e.note || '', pending: false, who: whoOf(e.actor_id), actor_id: e.actor_id,
         photos: (e.photos || []).map(p => ({ label: p.label, path: p.path, url: urls[p.path] || null })) })) }));
   },
-  // อัปโหลดรูปของ event → [{path,label}] (รูปถูกย่อแล้วตอนเลือก) · upsert = ส่งซ้ำตอน sync ได้
-  async upload(feederCode, defectId, eventId, photos) {
+  // อัปโหลดรูปของ event → [{path,label,lat?,lng?}] (รูปถูกย่อแล้วตอนเลือก) · upsert = ส่งซ้ำตอน sync ได้
+  // folderId = defect_id (จุดบกพร่อง) หรือ segment_id (งานตัด)
+  async upload(feederCode, folderId, eventId, photos) {
     const out = [];
     for (const [i, ph] of (photos || []).filter(p => p.file).entries()) {
-      const path = feederCode + '/' + defectId + '/' + eventId + '_' + (i + 1) + '.jpg';
+      const path = feederCode + '/' + folderId + '/' + eventId + '_' + (i + 1) + '.jpg';
       await q(sb.storage.from('photos').upload(path, ph.file, { contentType: 'image/jpeg', upsert: true }), 'upload');
-      out.push({ path, label: ph.label });
+      out.push({ path, label: ph.label, lat: ph.lat, lng: ph.lng, src: ph.src, taken: ph.taken });
     }
     return out;
   },
@@ -235,10 +249,23 @@ const db = {
   // ── ลบงาน (Feeder ทั้งสาย): รูปใน Storage ก่อน (policy อ้าง defect ที่ยังอยู่) แล้วลบ feeder → ช่วง/จุด/ประวัติลบตาม cascade ──
   async deleteFeeder(f) {
     if (!LIVE) { S.feeders = S.feeders.filter(x => x.id !== f.id); S.defects = S.defects.filter(d => d.feeder_id !== f.id); return; }
-    const paths = S.defects.filter(d => d.feeder_id === f.id).flatMap(d => d.events.flatMap(e => e.photos.map(p => p.path))).filter(Boolean);
+    const paths = [...S.defects.filter(d => d.feeder_id === f.id).flatMap(d => d.events), ...f.segments.flatMap(s => s.works || [])].flatMap(e => e.photos.map(p => p.path)).filter(Boolean);
     if (paths.length) { const { error } = await sb.storage.from('photos').remove(paths); if (error) console.warn('ลบรูปไม่สำเร็จ (ยังลบงานต่อ)', error); }
     const gone = await q(sb.from('feeders').delete().eq('id', f.id).select('id'), 'deleteFeeder');
     if (!gone.length) throw new Error('ไม่มีสิทธิ์ลบงานนี้');
+  },
+  // ── แก้/ลบรายงานงานตัด (ผู้รับจ้าง, ต้องออนไลน์) · ponytail: รูปที่เอาออกค้างใน Storage (ผู้รับจ้างไม่มีสิทธิ์ลบไฟล์) ──
+  async editWork(f, s, w, note, photos) {
+    const at = nowIso(), keep = ({ path, label, lat, lng, src, taken }) => ({ path, label, lat, lng, src, taken });
+    if (!LIVE) { S.feeders = S.feeders.map(x => x.id !== f.id ? x : { ...x, segments: x.segments.map(y => y.seq !== s.seq ? y : { ...y, works: y.works.map(z => z.id === w.id ? { ...z, note, photos: viewPhotos(photos), edited: at } : z) }) }); return; }
+    const added = await db.upload(f.code, s.id, uuid(), photos.filter(p => p.file));
+    const rows = await q(sb.from('segment_works').update({ note, photos: [...photos.filter(p => p.path).map(keep), ...added], updated_at: at }).eq('id', w.id).select('id'), 'editWork');
+    if (!rows.length) throw new Error('ไม่มีสิทธิ์แก้รายงานนี้');
+  },
+  async deleteWork(f, s, w) {
+    if (!LIVE) { S.feeders = S.feeders.map(x => x.id !== f.id ? x : { ...x, segments: x.segments.map(y => y.seq !== s.seq ? y : { ...y, works: y.works.filter(z => z.id !== w.id) }) }); return; }
+    const rows = await q(sb.from('segment_works').delete().eq('id', w.id).select('id'), 'deleteWork');
+    if (!rows.length) throw new Error('ไม่มีสิทธิ์ลบรายงานนี้');
   },
   // ── นำเข้า: ex = feeder เดิม (หรือ null), mode append|replace, segs = ช่วงที่จะเพิ่ม → คืน feeder id ──
   async importFeeder(ex, code, line, contractorId, mode, segs) {
@@ -272,6 +299,7 @@ const db = {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'segments' }, reload)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'defects' }, reload)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'defect_events' }, p => { onEvent(p.new); reload(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'segment_works' }, p => { if (p.eventType === 'INSERT') onWork(p.new); reload(); })
       .subscribe();
   },
   unsubscribe() { if (db.channel) { sb.removeChannel(db.channel); db.channel = null; } }
@@ -314,6 +342,15 @@ function seed() {
     Df('D-0431',B,2,.5,'ระยะห่างไม่ถึงเกณฑ์','open',1,[H('created',1,'2026-09-25T10:10','กิ่งยางนาเข้าใกล้สายด้านทิศเหนือ',ph(2,2501))]),
     Df('D-0388',Cc,2,.4,'ไม่เก็บกิ่ง','passed',2,[H('created',1,'2026-09-15T13:00','',ph(1,1980)),H('fix_submitted',1,'2026-09-16T17:10','',ph(1,4870)),H('passed',2,'2026-09-18T09:20','',[])])
   ];
+  // งานตัดของผู้รับจ้าง (far = รูปแรกถ่ายห่างแนวสาย ~450 ม. → เตือน)
+  const W = (f, seq, kind, at, n, note, far) => { const s = f.segments[seq-1], p = along(s.coords, .5);
+    (s.works = s.works || []).push({ id: f.code + kind + seq, kind, at, note, who: f.contractor, pending: false,
+      photos: Array.from({ length: n }, (_, i) => ({ label: 'IMG_' + (6000 + seq*10 + i) + '.jpg', url: null, lat: p[0] + (far && !i ? 0.004 : 0.0001), lng: p[1] })) }); };
+  W(D,1,'started','2026-09-28T08:10',1,''); W(D,1,'finished','2026-09-28T16:20',4,'ตัดครบตามแผน เก็บกิ่งแล้ว');
+  W(D,2,'started','2026-09-29T08:30',2,''); W(D,2,'finished','2026-09-29T15:50',5,'',true);
+  W(D,3,'started','2026-09-30T09:00',1,'เริ่มตัดจากเสาต้นช่วง');
+  W(B,3,'started','2026-09-26T08:00',1,''); W(B,3,'finished','2026-09-26T17:00',4,''); W(B,4,'started','2026-09-27T08:15',1,'');
+  W(A,7,'started','2026-09-25T08:00',1,''); W(A,7,'finished','2026-09-25T16:40',4,'');
   const u = along(A.segments[2].coords, .42);
   return { feeders:[A,B,Cc,D,E], defects, user:{ lat:u[0]+0.0004, lng:u[1]+0.0002 } };
 }
@@ -334,11 +371,15 @@ const srv = {
     const photos = await db.upload(p.feederCode, p.defectId, p.evId, p.photos);
     await qIns(sb.from('defect_events').insert({ id: p.evId, defect_id: p.defectId, kind: p.kind, round_no: p.round_no, note: p.note, photos, created_at: p.at }), 'event');
   },
+  async addWork(p) {
+    const photos = await db.upload(p.feederCode, p.segId, p.id, p.photos);
+    await qIns(sb.from('segment_works').insert({ id: p.id, segment_id: p.segId, feeder_id: p.feederId, kind: p.kind, note: p.note, photos, created_at: p.at }), 'work');
+  },
   passSegment: async p => { await q(sb.from('segments').update({ passed_at: p.at, passed_by: S.me.id }).eq('id', p.segId), 'passSeg'); },
   closeFeeder: async p => { await q(sb.from('feeders').update({ closed_at: p.at }).eq('id', p.feederId), 'closeFeeder'); }
 };
 // ── แก้ state ในเครื่อง (โหมดสาธิต และรายการที่ยังรอส่ง) ──
-const viewPhotos = ps => (ps || []).map(ph => ({ label: ph.label, file: ph.file, url: ph.url || (ph.file ? URL.createObjectURL(ph.file) : null) }));
+const viewPhotos = ps => (ps || []).map(ph => ({ label: ph.label, file: ph.file, lat: ph.lat, lng: ph.lng, src: ph.src, taken: ph.taken, path: ph.path, url: ph.url || (ph.file ? URL.createObjectURL(ph.file) : null) }));
 const local = {
   createDefect(p, pending) {
     const code = LIVE ? 'D-····' : 'D-0' + (++S.seq);
@@ -349,6 +390,10 @@ const local = {
   addEvent(p, pending) {
     S.defects = S.defects.map(x => x.id !== p.defectId ? x : { ...x, status: p.kind === 'fix_submitted' ? 'submitted' : p.kind, round_no: p.kind === 'fix_submitted' ? x.round_no : p.round_no,
       events: [...x.events, { kind: p.kind, round_no: p.round_no, at: p.at, note: p.note, photos: viewPhotos(p.photos), pending, who: myName() }] });
+  },
+  addWork(p, pending) {
+    const w = { id: p.id, kind: p.kind, at: p.at, note: p.note, photos: viewPhotos(p.photos), who: myName(), pending };
+    S.feeders = S.feeders.map(f => f.id !== p.feederId ? f : { ...f, segments: f.segments.map(s => s.seq === p.seq ? { ...s, works: [...(s.works || []), w] } : s) });
   },
   passSegment(p, pending) { S.feeders = S.feeders.map(f => f.id !== p.feederId ? f : { ...f, segments: f.segments.map(s => s.seq === p.seq ? { ...s, passed_at: p.at, pending } : s) }); },
   closeFeeder(p) { S.feeders = S.feeders.map(f => f.id === p.feederId ? { ...f, closed_at: p.at } : f); }
@@ -365,7 +410,7 @@ const idb = (() => {
 const queue = {
   mine: async () => (await idb.tx('queue', 'readonly', s => s.getAll())).filter(o => o.user === S.me.id),
   async add(type, p) {
-    const photos = p.photos && p.photos.map(({ label, file }) => ({ label, file }));   // objectURL ใช้ข้ามการเปิดแอปไม่ได้
+    const photos = p.photos && p.photos.map(({ label, file, lat, lng, src, taken }) => ({ label, file, lat, lng, src, taken }));   // objectURL ใช้ข้ามการเปิดแอปไม่ได้
     try { await idb.tx('queue', 'readwrite', s => s.add({ type, p: { ...p, photos }, user: S.me.id })); }
     catch (e) { throw new Error('บันทึกไว้ในเครื่องไม่ได้ (' + e.message + ')'); }
     S.queue = (await queue.mine()).length;
@@ -405,6 +450,13 @@ const admApi = {
     if (!LIVE) { S.offices = [...S.offices, { id, name }]; return; }
     const { error } = await sb.from('offices').insert({ id, name });
     if (error) throw new Error(error.code === '23505' ? 'รหัสการไฟฟ้านี้มีอยู่แล้ว' : error.message);
+    S.offices = await q(sb.from('offices').select('*').order('name'), 'offices');
+  },
+  async removeOffice(id) {
+    if (!LIVE) { if (MOCK_USERS.some(u => u.office === id)) throw new Error('ยังมีผู้ใช้หรืองานในการไฟฟ้านี้ — ลบไม่ได้'); S.offices = S.offices.filter(o => o.id !== id); return; }
+    const { data, error } = await sb.from('offices').delete().eq('id', id).select();
+    if (error) throw new Error(error.code === '23503' ? 'ยังมีผู้ใช้หรืองานในการไฟฟ้านี้ — ลบไม่ได้' : error.message);
+    if (!data.length) throw new Error('ลบไม่สำเร็จ: ไม่มีสิทธิ์ลบ (รัน schema.sql ล่าสุดใน Supabase ก่อน)');
     S.offices = await q(sb.from('offices').select('*').order('name'), 'offices');
   },
   async create(f) {
@@ -471,18 +523,23 @@ const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g, c => ({ '&':'&am
 // ── derived ──
 const curF = () => S.feeders.find(x => x.id === S.cur);
 const dOf = (fid, seq) => S.defects.filter(d => d.feeder_id === fid && (seq == null || d.seq === seq));
-function segSt(f, s) { const ds = dOf(f.id, s.seq); if (ds.some(d => d.status !== 'passed')) return 'defect'; if (s.passed_at || ds.length) return 'pass'; return 'none'; }
+const workOf = (s, kind) => (s.works || []).filter(w => w.kind === kind).pop();
+function segSt(f, s) { const ds = dOf(f.id, s.seq); if (ds.some(d => d.status !== 'passed')) return 'defect'; if (s.passed_at || ds.length) return 'pass'; return workOf(s, 'finished') ? 'cut' : workOf(s, 'started') ? 'cutting' : 'none'; }
+// ระยะจากพิกัดรูปถึงแนวช่วง (ม.) · ไม่มีพิกัด = null
+const photoFar = (f, s, ph) => ph.lat == null ? null : snapAll(ph.lat, ph.lng, f).find(o => o.seq === s.seq).d;
+const SEG_BAR = k => k === 'none' ? '#CFC8D4' : SEG[k].solid;   // แถบสีความคืบหน้า
 function segPassAt(f, s) {
   if (segSt(f, s) !== 'pass') return '–'; if (s.passed_at) return fmtDay(s.passed_at);
   let last = null; dOf(f.id, s.seq).forEach(d => d.events.forEach(h => { if (h.kind === 'passed') last = h.at; })); return last ? fmtDay(last) : '–';
 }
 function fStats(f) {
   const ds = dOf(f.id), st = f.segments.map(s => segSt(f, s)), passN = st.filter(x => x === 'pass').length;
+  const cutN = f.segments.filter(s => workOf(s, 'finished')).length, startN = f.segments.filter(s => workOf(s, 'started') || workOf(s, 'finished')).length;
   const out = ds.filter(d => d.status === 'open' || d.status === 'rejected').length, rev = ds.filter(d => d.status === 'submitted').length;
   const km = f.segments.reduce((a, s) => a + s.length_km, 0), trees = f.segments.reduce((a, s) => a + (s.plan_trees || 0), 0);
   const pct = f.segments.length ? Math.round(passN/f.segments.length*100) : 0;
   const rounds = ds.reduce((a, d) => Math.max(a, d.round_no), f.segments.some(s => s.passed_at) ? 1 : 0);
-  return { ds, st, passN, out, rev, km, trees, pct, rounds, fresh: ds.filter(d => S.fresh.has(d.id)).length,
+  return { ds, st, passN, cutN, startN, out, rev, km, trees, pct, rounds, fresh: ds.filter(d => S.fresh.has(d.id)).length,
     status: f.closed_at ? 'closed' : (out > 0 ? 'waiting' : 'active'), allPass: f.segments.length > 0 && passN === f.segments.length };
 }
 const myFeeders = () => S.feeders.filter(f => f.office === S.me.office && (isInsp() || f.contractor_id === S.me.id));
@@ -564,6 +621,28 @@ async function shrink(file) {
     return new File([b], file.name.replace(/\.\w+$/, '') + '.jpg', { type: 'image/jpeg' });
   } catch (e) { return file; }   // ponytail: ถอดรหัสรูปไม่ได้ (เช่น HEIC บนเดสก์ท็อป) → ส่งไฟล์ต้นฉบับ
 }
+// ── EXIF (JPEG) → { lat, lng, taken } จากไฟล์ต้นฉบับ (ต้องอ่านก่อนย่อ — canvas ทิ้ง EXIF) · อ่านไม่ได้/ไม่มี = {} ──
+async function readExif(file) {
+  try {
+    const b = new DataView(await file.slice(0, 256 * 1024).arrayBuffer());
+    if (b.getUint16(0) !== 0xFFD8) return {};
+    for (let o = 2; o < b.byteLength - 10; o += 2 + b.getUint16(o + 2)) {
+      const m = b.getUint16(o); if ((m & 0xFF00) !== 0xFF00 || m === 0xFFDA) break;
+      if (m !== 0xFFE1 || b.getUint32(o + 4) !== 0x45786966) continue;   // APP1 "Exif"
+      const t = o + 10, le = b.getUint16(t) === 0x4949, u16 = p => b.getUint16(p, le), u32 = p => b.getUint32(p, le);
+      const ifd = p => { const r = {}; for (let i = 0, n = u16(p); i < n; i++) r[u16(p + 2 + i * 12)] = p + 2 + i * 12; return r; };
+      const str = e => { const n = u32(e + 4), p = n > 4 ? t + u32(e + 8) : e + 8; let s = ''; for (let i = 0; i < n - 1; i++) s += String.fromCharCode(b.getUint8(p + i)); return s; };
+      const rat = p => u32(p) / u32(p + 4), dms = e => { const p = t + u32(e + 8); return rat(p) + rat(p + 8) / 60 + rat(p + 16) / 3600; };
+      const i0 = ifd(t + u32(t + 4)), ex = i0[0x8769] ? ifd(t + u32(i0[0x8769] + 8)) : {}, gp = i0[0x8825] ? ifd(t + u32(i0[0x8825] + 8)) : {}, out = {};
+      const dt = ex[0x9003] ? str(ex[0x9003]) : i0[0x0132] ? str(i0[0x0132]) : '', d = dt.match(/^(\d{4}):(\d\d):(\d\d) (\d\d):(\d\d):(\d\d)/);
+      if (d) out.taken = new Date(+d[1], d[2] - 1, +d[3], +d[4], +d[5], +d[6]).toISOString();   // EXIF ไม่มีโซนเวลา = เวลาเครื่องที่ถ่าย
+      if (gp[2] && gp[4]) { const lat = dms(gp[2]) * (str(gp[1]) === 'S' ? -1 : 1), lng = dms(gp[4]) * (str(gp[3]) === 'W' ? -1 : 1);
+        if (isFinite(lat) && isFinite(lng) && (lat || lng)) Object.assign(out, { lat, lng }); }
+      return out;
+    }
+  } catch (e) {}
+  return {};
+}
 const readPhotos = async files => Promise.all(files.map(async f => { const s = await shrink(f); return { label: s.name, url: URL.createObjectURL(s), file: s }; }));
 // ผู้รับจ้างส่งหลักฐาน → badge + toast ของผู้ตรวจ
 function notifyFix(d, who, quiet) {
@@ -578,6 +657,12 @@ async function onRemoteEvent(e) {
   await refresh();
   const d = S.defects.find(x => x.id === e.defect_id); if (d) notifyFix(d, whoOf(e.actor_id));
 }
+// ผู้รับจ้างเริ่มตัด/ตัดเสร็จ → toast ของผู้ตรวจ
+function onWork(w) {
+  if (!isInsp() || w.actor_id === S.me.id) return;
+  const f = S.feeders.find(x => x.id === w.feeder_id), s = f && f.segments.find(x => x.id === w.segment_id); if (!s) return;
+  showToast('อัปเดตทันที: ' + f.code + ' ช่วงที่ ' + s.seq + (w.kind === 'started' ? ' ผู้รับจ้างเริ่มตัด' : ' ผู้รับจ้างแจ้งตัดเสร็จ'), 'rt', 4500);
+}
 function simRealtime() {
   if (!isInsp() || S.screen === 'login') return;
   const d = S.defects.find(x => x.status === 'open' && x.feeder_id === 'MDA03R-04'); if (!d) return;
@@ -585,7 +670,7 @@ function simRealtime() {
   S.defects = S.defects.map(x => x.id !== d.id ? x : { ...x, status: 'submitted', events: [...x.events, { kind: 'fix_submitted', round_no: x.round_no, at: nowIso(), note: 'ตัดกิ่งที่ค้างบนสายออกแล้ว ใช้รถกระเช้า', photos: [{ label: 'IMG_5201.jpg', url: null }, { label: 'IMG_5202.jpg', url: null }], pending: false, who }] });
   S.fresh.add(d.id); notifyFix(d, who);
 }
-function openFeeder(id) { const con = !isInsp(); set({ screen: 'feeder', cur: id, panel: { mode: 'list' }, view: con ? 'list' : 'map', chip: con ? 'todo' : 'all', sheet: null, draft: null, showNotif: false }); }
+function openFeeder(id) { const con = !isInsp(), f = S.feeders.find(x => x.id === id); set({ screen: 'feeder', cur: id, panel: { mode: 'list' }, view: con ? 'list' : 'map', chip: con ? (f && fStats(f).out ? 'todo' : 'work') : 'all', sheet: null, draft: null, showNotif: false }); }
 function selectSeg(seq) { if (S.draft) return; set({ panel: { mode: 'segment', seq } }); }
 function openDefect(id) {
   if (S.draft) return;
@@ -642,6 +727,44 @@ function saveFix() {
     if (!LIVE && !r.pending) { S.fresh.add(d.id); notifyFix(d, myName(), true); }   // โหมดสาธิต: แจ้งผู้ตรวจที่ล็อกอินถัดไป
     return pendMsg(r, 'ส่งหลักฐานการแก้ไข ' + d.code + ' แล้ว · รอผู้ตรวจ', 'บันทึกหลักฐานไว้ในเครื่อง · จะส่งเมื่อมีสัญญาณ');
   });
+}
+function saveWork() {
+  const fm = S.form, min = WORK[fm.kind][1];   // สูงสุดคุมตอนเลือกรูป (FILE.workPhotos)
+  if (fm.photos.length < min) return set({ err: 'กรุณาแนบรูปอย่างน้อย ' + min + ' รูป (ตอนนี้ ' + fm.photos.length + ' รูป)' });
+  if (fm.editId) return set({ err: null, wconf: { mode: 'edit', seq: fm.seq, kind: fm.kind, step: 1 } });   // แก้ไข → ยืนยัน 2 ชั้นก่อนบันทึก
+  const f = curF(), s = f.segments.find(x => x.seq === fm.seq), t = (fm.kind === 'started' ? 'เริ่มตัด' : 'แจ้งตัดเสร็จ') + ' ช่วงที่ ' + s.seq;
+  run(async () => {
+    const r = await db.do('addWork', { id: uuid(), feederId: f.id, feederCode: f.code, segId: s.id, seq: s.seq, kind: fm.kind, note: fm.note, photos: fm.photos });
+    Object.assign(S, { sheet: null, form: null, err: null });
+    return pendMsg(r, t + ' แล้ว', t + ' · บันทึกไว้ในเครื่อง รอส่ง');
+  });
+}
+// แก้/ลบรายงานงานตัด: ชั้นที่ 1 สรุปสิ่งที่จะเปลี่ยน → ชั้นที่ 2 ยืนยันอีกครั้ง (ไม่ใช้รหัส)
+const wconfTarget = () => { const c = S.wconf, f = curF(), s = f.segments.find(x => x.seq === c.seq); return { c, f, s, w: workOf(s, c.kind) }; };
+function wconfGo() {
+  const { c, f, s, w } = wconfTarget(), t = (c.kind === 'started' ? 'เริ่มตัด' : 'ตัดเสร็จ') + ' ช่วงที่ ' + s.seq;
+  if (c.mode === 'edit') { const fm = S.form; S.wconf = null;
+    return run(async () => { await db.editWork(f, s, w, fm.note, fm.photos); Object.assign(S, { sheet: null, form: null, err: null }); return ['แก้ไขรายงาน' + t + ' แล้ว', 'ok']; }); }
+  S.wconf = null;
+  run(async () => { await db.deleteWork(f, s, w); return ['ลบรายงาน' + t + ' แล้ว', 'ok']; });
+}
+function vWorkConfirm() {
+  if (!S.wconf || !curF()) return '';
+  const { c, s, w } = wconfTarget(); if (!w) return '';
+  const del = c.mode === 'del', step1 = c.step === 1, fm = S.form, head = del ? '#B3261E' : SEG.cut.solid, t = WORK[c.kind][0];
+  const btn = (act, label, main) => `<button data-act="${act}" ${main && S.busy ? 'disabled' : ''} style="flex:1;height:52px;border-radius:12px;font-size:16px;font-weight:800;${main ? `border:0;background:${head};color:#fff` : 'border:1.5px solid #C9BED1;background:#fff;color:#1C1324'}">${label}</button>`;
+  const back = c.kind === 'finished' ? SEG.cutting.label : SEG.none.label;
+  const sum = del ? `• รายงาน "${t}" ช่วงที่ ${s.seq} และรูป ${w.photos.length} รูป จะถูกลบ ผู้ตรวจจะไม่เห็นอีก<br>• สถานะช่วงจะกลับเป็น "${back}"`
+    : `• รูป ${w.photos.length} → ${fm.photos.length} รูป${fm.note !== w.note ? '<br>• แก้หมายเหตุ' : ''}<br>• ผู้ตรวจจะเห็นว่ารายงานนี้ "แก้ไขเมื่อ" วันเวลานี้`;
+  return `<div data-noprint data-act="noop" style="position:absolute;inset:0;z-index:1450;background:rgba(28,19,36,.6);display:flex;align-items:center;justify-content:center;padding:20px">
+    <div style="width:min(100%,420px);background:#fff;border-radius:18px;box-shadow:0 12px 40px rgba(0,0,0,.35);overflow:hidden">
+      <div style="background:${head};color:#fff;padding:16px 20px"><div style="font-size:13px;font-weight:700;opacity:.9">ยืนยันขั้นที่ ${c.step} จาก 2</div><div style="font-size:19px;font-weight:800">${del ? 'ลบรายงาน' : 'บันทึกการแก้ไข'} · ช่วงที่ ${s.seq}</div></div>
+      <div style="padding:18px 20px;display:flex;flex-direction:column;gap:14px">
+        ${step1 ? `<div style="background:${del ? '#FDE7E7' : SEG.cutting.bg};border-radius:12px;padding:12px 14px;font-size:15px;color:${del ? '#8E1B1B' : SEG.cut.fg};line-height:1.7">${sum}</div>
+          <div style="display:flex;gap:10px">${btn('wconfCancel', 'ยกเลิก')}${btn('wconfNext', 'ต่อไป', true)}</div>`
+        : `<div style="font-size:16px;font-weight:700;text-align:center">${del ? 'ยืนยันลบรายงานนี้จริงหรือไม่? กู้คืนไม่ได้' : 'ยืนยันบันทึกการแก้ไขรายงานนี้?'}</div>
+          <div style="display:flex;gap:10px">${btn('wconfBack', 'ย้อนกลับ')}${btn('wconfGo', S.busy ? 'กำลังบันทึก…' : del ? 'ยืนยันลบ' : 'ยืนยันแก้ไข', true)}</div>`}
+      </div></div></div>`;
 }
 function closeFeeder() { const f = curF(); run(async () => pendMsg(await db.do('closeFeeder', { feederId: f.id }), 'ปิดงาน Feeder ' + f.code + ' แล้ว', 'ปิดงาน Feeder ' + f.code + ' · บันทึกไว้ในเครื่อง รอส่ง')); }
 const demoPhoto = () => ({ label: 'IMG_' + (5200 + Math.floor(Math.random()*700)) + '.jpg', url: null });
@@ -777,7 +900,7 @@ function syncMain() {
     f.segments.forEach(s => {
       const st = segSt(f, s), c = SEG[st].solid, sel = selSeg === s.seq || (dr && dr.seq === s.seq);
       L.polyline(s.coords, { color: sel ? P : '#fff', weight: sel ? 15 : 11, opacity: .95, interactive: false }).addTo(layer);
-      L.polyline(s.coords, { color: c, weight: 6, dashArray: st === 'none' ? '8 9' : null, interactive: false }).addTo(layer);
+      L.polyline(s.coords, { color: c, weight: 6, dashArray: st === 'none' ? '8 9' : st === 'cutting' ? '14 7' : null, interactive: false }).addTo(layer);
       L.polyline(s.coords, { color: '#000', weight: 26, opacity: 0 }).on('click', e => { L.DomEvent.stopPropagation(e); if (S.draft) return moveDraft(e.latlng.lat, e.latlng.lng); selectSeg(s.seq); }).addTo(layer);
       L.marker(along(s.coords, .5), { icon: numIcon(s.seq, sel ? P : c, 28, 8) }).on('click', () => selectSeg(s.seq)).addTo(layer);
     });
@@ -859,7 +982,7 @@ function vHeader() {
 }
 
 function vLogin() {
-  const roles = [['inspector', 'ตรวจ', 'เจ้าหน้าที่ กฟภ. (ผู้ตรวจ)', 'นำเข้า Feeder · ออกตรวจ · ปักจุดบกพร่อง · ปิดงาน'], ['contractor', 'รับจ้าง', 'ผู้รับจ้าง', 'ดูผลตรวจ · นำทาง · ส่งหลักฐานการแก้ไข']].map(([k, abbr, title, desc]) => {
+  const roles = [['inspector', 'ตรวจ', 'เจ้าหน้าที่ กฟภ. (ผู้ตรวจ)', 'นำเข้า Feeder · ออกตรวจ · ปักจุดบกพร่อง · ปิดงาน'], ['contractor', 'รับจ้าง', 'ผู้รับจ้าง', 'รายงานงานตัด · ดูผลตรวจ · ส่งหลักฐานการแก้ไข']].map(([k, abbr, title, desc]) => {
     const on = S.role === k;
     return `<button data-act="pickRole" data-arg="${k}" style="display:flex;align-items:center;gap:14px;text-align:left;min-height:76px;padding:12px 14px;border-radius:12px;border:2px solid ${on ? P : '#DDD5E2'};background:${on ? '#F7F0FA' : '#fff'}">
       <div style="flex:none;width:48px;height:48px;border-radius:12px;background:${on ? P : '#EFEAF2'};color:${on ? '#fff' : P};display:flex;align-items:center;justify-content:center;font-weight:800;font-size:14px">${abbr}</div>
@@ -909,7 +1032,7 @@ function vLogin() {
 function vDash() {
   const insp = isInsp(), fs = myFeeders(), all = fs.map(x => [x, fStats(x)]), sum = k => all.reduce((a, [, st]) => a + st[k], 0);
   const tiles = insp ? [[fs.length, 'Feeder', P], [sum('km').toFixed(1), 'ระยะทางรวม (กม.)'], [sum('out'), 'จุดบกพร่องค้าง', '#C62828'], [sum('rev'), 'รอตรวจซ้ำ', '#B85C00']]
-    : [[sum('out'), 'จุดที่ต้องแก้ไข', '#C62828'], [sum('rev'), 'ส่งแล้ว รอตรวจ', '#B85C00'], [all.reduce((a, [, st]) => a + st.ds.filter(d => d.status === 'passed').length, 0), 'ผ่านแล้ว', '#2E7D32']];
+    : [[sum('cutN') + '/' + fs.reduce((a, x) => a + x.segments.length, 0), 'ช่วงที่ตัดเสร็จ', '#00636B'], [sum('out'), 'จุดที่ต้องแก้ไข', '#C62828'], [sum('rev'), 'ส่งแล้ว รอตรวจ', '#B85C00'], [all.reduce((a, [, st]) => a + st.ds.filter(d => d.status === 'passed').length, 0), 'ผ่านแล้ว', '#2E7D32']];
   const cards = all.map(([x, st]) => {
     const fresh = insp && st.fresh > 0, id = esc(x.id), stat = (v, l, fg) => `<div style="background:#F6F3F8;border-radius:10px;padding:7px 6px;text-align:center"><div style="font-size:20px;font-weight:800;line-height:1.15;color:${fg || '#1C1324'}">${v}</div><div style="font-size:13px;color:#5E5566">${l}</div></div>`;
     return `<div style="background:#fff;border:1px solid ${fresh ? '#E87500' : '#E3DCE8'};border-radius:14px;padding:16px;display:flex;flex-direction:column;gap:14px">
@@ -918,15 +1041,15 @@ function vDash() {
         ${pill(FEED[st.status], ';flex:none')}</div>
       ${fresh ? `<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:10px;background:#FFEFD6;color:#7A3B00;font-size:14px;font-weight:700"><span style="width:9px;height:9px;border-radius:50%;background:#E87500"></span>อัปเดตทันที · ผู้รับจ้างส่งหลักฐานใหม่ ${st.fresh} จุด</div>` : ''}
       <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px">${stat(x.segments.length, 'ช่วง')}${stat(st.km.toFixed(2), 'กม.')}${stat(st.trees, 'ต้น')}${stat(st.ds.length, 'จุดบกพร่อง')}${stat(st.out, 'ค้างแก้', st.out ? '#C62828' : '#5E5566')}${stat(st.rev, 'รอตรวจ', st.rev ? '#B85C00' : '#5E5566')}</div>
-      <div style="display:flex;flex-direction:column;gap:6px"><div style="display:flex;justify-content:space-between;font-size:14px"><span style="color:#5E5566">ช่วงที่ผ่าน ${st.passN}/${x.segments.length}</span><b>${st.pct}%</b></div>
-        <div style="display:flex;gap:2px;height:12px;border-radius:4px;overflow:hidden">${x.segments.map((s, i) => `<div title="ช่วงที่ ${s.seq} · ${SEG[st.st[i]].label}" style="flex:${s.length_km.toFixed(3)} 1 0;background:${{ none: '#CFC8D4', defect: '#C62828', pass: '#2E7D32' }[st.st[i]]}"></div>`).join('')}</div></div>
+      <div style="display:flex;flex-direction:column;gap:6px"><div style="display:flex;justify-content:space-between;font-size:14px"><span style="color:#5E5566">ช่วงที่ผ่าน ${st.passN}/${x.segments.length} · <b style="color:#00585F">ตัดเสร็จ ${st.cutN}/${x.segments.length}</b></span><b>${st.pct}%</b></div>
+        <div style="display:flex;gap:2px;height:12px;border-radius:4px;overflow:hidden">${x.segments.map((s, i) => `<div title="ช่วงที่ ${s.seq} · ${SEG[st.st[i]].label}" style="flex:${s.length_km.toFixed(3)} 1 0;background:${SEG_BAR(st.st[i])}"></div>`).join('')}</div></div>
       ${insp ? `<div style="display:grid;grid-template-columns:1.2fr 1fr 1fr;gap:8px"><button data-act="fdash" data-arg="${id}" class="bp" style="border-radius:10px;font-size:15px">ความคืบหน้า</button><button data-act="openFeeder" data-arg="${id}" class="bo" style="border-radius:10px;font-size:15px">แผนที่</button><button data-act="report" data-arg="${id}" class="bo" style="border-radius:10px;font-size:15px">รายงาน</button></div>`
-        : `<div style="display:grid;grid-template-columns:1.6fr 1fr;gap:8px"><button data-act="openFeeder" data-arg="${id}" class="bp" style="height:52px;border-radius:10px">${st.out ? 'ดูจุดที่ต้องแก้ (' + st.out + ')' : 'ดูผลตรวจ'}</button><button data-act="fdash" data-arg="${id}" class="bo" style="height:52px;border-radius:10px;font-size:15px">ความคืบหน้า</button></div>`}
+        : `<div style="display:grid;grid-template-columns:1.6fr 1fr;gap:8px"><button data-act="openFeeder" data-arg="${id}" class="bp" style="height:52px;border-radius:10px">${st.out ? 'ดูจุดที่ต้องแก้ (' + st.out + ')' : 'งานตัด / ผลตรวจ'}</button><button data-act="fdash" data-arg="${id}" class="bo" style="height:52px;border-radius:10px;font-size:15px">ความคืบหน้า</button></div>`}
     </div>`;
   }).join('');
   return `<div data-scroll="dash" class="scroll"><div style="max-width:1200px;margin:0 auto;padding:20px 16px 120px;display:flex;flex-direction:column;gap:18px">
     <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap">
-      <div><div style="font-size:15px;color:#5E5566">${insp ? 'ผู้ตรวจงาน' : 'ผู้รับจ้าง'}</div><div style="font-size:26px;font-weight:800;line-height:1.25">${insp ? 'ภาพรวมงานตรวจรับ' : 'งานที่ต้องแก้ไข'}</div></div>
+      <div><div style="font-size:15px;color:#5E5566">${insp ? 'ผู้ตรวจงาน' : 'ผู้รับจ้าง'}</div><div style="font-size:26px;font-weight:800;line-height:1.25">${insp ? 'ภาพรวมงานตรวจรับ' : 'งานตัดและงานแก้ไข'}</div></div>
       ${insp && S.wide ? `<button data-act="goImport" class="bp" style="padding:0 20px;display:flex;align-items:center;gap:8px"><span style="font-size:22px;line-height:1">+</span>นำเข้า Feeder</button>` : ''}</div>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px">${tiles.map(t => tile(t[0], t[1], t[2], true)).join('')}</div>
     <div style="font-size:19px;font-weight:700;margin-top:4px">${insp ? 'Feeder ทั้งหมด' : 'Feeder ที่ได้รับมอบหมาย'}</div>
@@ -937,11 +1060,12 @@ function vDash() {
 
 function vFDash() {
   const f = curF(), st = fStats(f), n = f.segments.length || 1, cnt = k => st.st.filter(x => x === k).length;
-  const pDeg = Math.round(cnt('pass') / n * 360), dDeg = pDeg + Math.round(cnt('defect') / n * 360);
+  const RING = ['pass', 'defect', 'cut', 'cutting', 'none'];
+  let deg = 0; const ring = RING.map(k => { const a = deg; deg += cnt(k) / n * 360; return SEG_BAR(k) + ' ' + a.toFixed(1) + 'deg ' + deg.toFixed(1) + 'deg'; }).join(',');
   const kmPass = f.segments.reduce((a, x, i) => a + (st.st[i] === 'pass' ? x.length_km : 0), 0), by = k => st.ds.filter(d => d.status === k).length;
   const acts = [];
   st.ds.forEach(d => d.events.forEach(h => acts.push({ d, h, t: +new Date(h.at) })));
-  f.segments.forEach(x => { if (x.passed_at) acts.push({ seg: x, t: +new Date(x.passed_at) }); });
+  f.segments.forEach(x => { if (x.passed_at) acts.push({ seg: x, t: +new Date(x.passed_at) }); (x.works || []).forEach(w => acts.push({ seg: x, w, t: +new Date(w.at) })); });
   acts.sort((a, b) => b.t - a.t);
   const rmax = Math.max(0, ...st.ds.map(d => d.round_no), f.segments.some(x => x.passed_at) ? 1 : 0);
   const rounds = Array.from({ length: rmax }, (_, i) => { const r = i + 1, c = { created: 0, passed: 0, rejected: 0 }; st.ds.forEach(d => d.events.forEach(h => { if (h.round_no === r && h.kind in c) c[h.kind]++; })); return [r, c]; });
@@ -956,14 +1080,14 @@ function vFDash() {
       <div style="display:flex;gap:8px;flex-wrap:wrap"><button data-act="openFeeder" data-arg="${esc(f.id)}" class="bp" style="padding:0 18px">เปิดแผนที่</button>${isInsp() ? `<button data-act="report" data-arg="${esc(f.id)}" class="bo" style="padding:0 18px">รายงานสรุป</button>` : ''}</div></div>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:14px">
       <div class="card" style="padding:18px;flex-direction:row;gap:18px;align-items:center">
-        <div style="flex:none;position:relative;width:120px;height:120px;border-radius:50%;background:conic-gradient(#2E7D32 0 ${pDeg}deg,#C62828 ${pDeg}deg ${dDeg}deg,#CFC8D4 ${dDeg}deg 360deg)">
+        <div style="flex:none;position:relative;width:120px;height:120px;border-radius:50%;background:conic-gradient(${ring})">
           <div style="position:absolute;inset:14px;border-radius:50%;background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center"><div style="font-size:30px;font-weight:800;line-height:1">${st.pct}%</div><div style="font-size:13px;color:#5E5566">ช่วงที่ผ่าน</div></div></div>
         <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:8px"><div style="font-size:16px;font-weight:800">ความคืบหน้าการตรวจรับ</div>
-          ${[['#2E7D32', 'ผ่าน', cnt('pass')], ['#C62828', 'มีจุดบกพร่องค้าง', cnt('defect')], ['#CFC8D4', 'ยังไม่ตรวจ', cnt('none')]].map(([c, l, v]) => `<div style="display:flex;align-items:center;gap:8px;font-size:15px"><span style="flex:none;width:14px;height:14px;border-radius:3px;background:${c}"></span><span style="flex:1">${l}</span><b>${v} ช่วง</b></div>`).join('')}</div></div>
-      <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px">${tile(kmPass.toFixed(2) + '/' + st.km.toFixed(2), 'ระยะทางที่ผ่าน (กม.)', '#1B5E20')}${tile(st.trees, 'จำนวนต้นตามแผน')}${tile(st.out, 'จุดค้างแก้ไข', st.out ? '#C62828' : '#5E5566')}${tile(st.rev, 'รอตรวจซ้ำ', st.rev ? '#B85C00' : '#5E5566')}</div>
+          ${RING.map(k => [SEG_BAR(k), SEG[k].label, cnt(k)]).map(([c, l, v]) => `<div style="display:flex;align-items:center;gap:8px;font-size:15px"><span style="flex:none;width:14px;height:14px;border-radius:3px;background:${c}"></span><span style="flex:1">${l}</span><b>${v} ช่วง</b></div>`).join('')}</div></div>
+      <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px">${tile(kmPass.toFixed(2) + '/' + st.km.toFixed(2), 'ระยะทางที่ผ่าน (กม.)', '#1B5E20')}${tile(st.cutN + '/' + f.segments.length, 'ผู้รับจ้างแจ้งตัดเสร็จ (ช่วง)', '#00636B')}${tile(st.trees, 'จำนวนต้นตามแผน')}${tile(st.out, 'จุดค้างแก้ไข', st.out ? '#C62828' : '#5E5566')}${tile(st.rev, 'รอตรวจซ้ำ', st.rev ? '#B85C00' : '#5E5566')}</div>
     </div>
     <div class="card"><div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:baseline"><div style="font-size:17px;font-weight:800">สถานะรายช่วงตามแนวสาย</div><div style="font-size:14px;color:#5E5566">ความกว้างตามความยาวช่วง · แตะเพื่อเปิดบนแผนที่</div></div>
-      <div style="display:flex;gap:3px;min-height:64px">${f.segments.map((x, i) => { const k = st.st[i], c = SEG[k]; return `<button data-act="segOnMap" data-arg="${x.seq}" title="ช่วงที่ ${x.seq} · ${x.length_km.toFixed(2)} กม. · ${c.label}" style="flex:${x.length_km.toFixed(3)} 1 0;min-width:30px;border:0;border-radius:6px;background:${{ none: '#EEEAF0', defect: '#C62828', pass: '#2E7D32' }[k]};color:${k === 'none' ? '#3F3846' : '#fff'};display:flex;flex-direction:column;align-items:center;justify-content:center;padding:6px 2px;background-image:${k === 'none' ? 'repeating-linear-gradient(135deg,transparent 0 6px,rgba(0,0,0,.06) 6px 12px)' : 'none'}"><span style="font-size:16px;font-weight:800;line-height:1.1">${x.seq}</span><span style="font-size:12px;font-weight:700">${c.glyph}</span></button>`; }).join('')}</div>
+      <div style="display:flex;gap:3px;min-height:64px">${f.segments.map((x, i) => { const k = st.st[i], c = SEG[k]; return `<button data-act="segOnMap" data-arg="${x.seq}" title="ช่วงที่ ${x.seq} · ${x.length_km.toFixed(2)} กม. · ${c.label}" style="flex:${x.length_km.toFixed(3)} 1 0;min-width:30px;border:0;border-radius:6px;background:${k === 'none' ? '#EEEAF0' : c.solid};color:${k === 'none' ? '#3F3846' : '#fff'};display:flex;flex-direction:column;align-items:center;justify-content:center;padding:6px 2px;background-image:${k === 'none' ? 'repeating-linear-gradient(135deg,transparent 0 6px,rgba(0,0,0,.06) 6px 12px)' : 'none'}"><span style="font-size:16px;font-weight:800;line-height:1.1">${x.seq}</span><span style="font-size:12px;font-weight:700">${c.glyph}</span></button>`; }).join('')}</div>
       <div style="display:flex;justify-content:space-between;font-size:13px;color:#5E5566"><span>ต้นสาย</span><span>รวม ${st.km.toFixed(2)} กม. · ${f.segments.length} ช่วง</span></div></div>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr));gap:14px;align-items:start">
       <div class="card"><div style="font-size:17px;font-weight:800">จุดบกพร่องตามสถานะ <span class="sub">· ${st.ds.length} จุด</span></div>
@@ -976,7 +1100,8 @@ function vFDash() {
         ${rounds.map(([r, c]) => `<div style="display:grid;grid-template-columns:80px repeat(3,minmax(0,1fr));gap:6px;font-size:15px;align-items:center;padding:6px 0;border-top:1px solid #ECE6EF"><b>ครั้งที่ ${r}</b><span style="color:#8E1B1B;font-weight:700">${c.created}</span><span style="color:#1B5E20;font-weight:700">${c.passed}</span><span style="color:#6B1414;font-weight:700">${c.rejected}</span></div>`).join('')}
         ${rounds.length ? '' : '<div style="font-size:15px;color:#5E5566">ยังไม่มีการตรวจ</div>'}</div>
       <div class="card" style="gap:4px"><div style="font-size:17px;font-weight:800;margin-bottom:6px">ความเคลื่อนไหวล่าสุด</div>
-        ${acts.slice(0, 6).map(a => { if (a.seg) return actRow('segOnMap', a.seg.seq, '#2E7D32', '✓', '4px', 'ช่วงที่ ' + a.seg.seq + ' ผ่านทั้งช่วง', fmtDay(a.seg.passed_at));
+        ${acts.slice(0, 6).map(a => { if (a.w) { const k = SEG[a.w.kind === 'started' ? 'cutting' : 'cut']; return actRow('segOnMap', a.seg.seq, k.solid, k.glyph, '4px', (a.w.kind === 'started' ? 'เริ่มตัด' : 'ตัดเสร็จ') + ' · ช่วงที่ ' + a.seg.seq, a.w.who + ' · ' + a.w.photos.length + ' รูป · ' + fmtAt(a.w.at)); }
+          if (a.seg) return actRow('segOnMap', a.seg.seq, '#2E7D32', '✓', '4px', 'ช่วงที่ ' + a.seg.seq + ' ผ่านทั้งช่วง', fmtDay(a.seg.passed_at));
           const e = EV[a.h.kind]; return actRow('defOnMap', a.d.id, e[0], e[1], e[2], e[4] + ' · ' + a.d.code, 'ช่วงที่ ' + a.d.seq + ' · ' + a.d.issue_type + ' · ' + fmtAt(a.h.at)); }).join('')}
         ${acts.length ? '' : '<div style="font-size:15px;color:#5E5566">ยังไม่มีความเคลื่อนไหว</div>'}</div>
     </div></div></div>`;
@@ -1082,6 +1207,39 @@ function segView(f) {
     short: dash(x.voltage) + ' · ' + dash(x.plan_trees) + ' ต้น · ' + densText(x) };
 }
 const passBtn = (v, h) => `<button data-act="passSeg" data-arg="${v.x.seq}" ${v.dis ? 'disabled' : ''} style="height:${h}px;border:2px solid ${v.dis ? '#C9C2CE' : '#2E7D32'};border-radius:12px;background:#fff;color:${v.dis ? '#8A8090' : '#1B5E20'};font-size:${h > 52 ? 16 : 15}px;font-weight:800">✓ ผ่านทั้งช่วง</button>`;
+// ── งานตัดของผู้รับจ้าง ──
+// ปุ่มขั้นถัดไปของผู้รับจ้าง: เริ่มตัด → แจ้งตัดเสร็จ → (เสร็จแล้ว = ป้าย)
+function workBtn(f, x, h) {
+  const st = workOf(x, 'started'), fin = workOf(x, 'finished');
+  if (fin) return doneBox(SEG.cut.bg, SEG.cut.fg, SEG.cut.glyph + ' ตัดเสร็จ ' + fmtAt(fin.at) + (fin.pending ? ' · รอส่ง' : ''));
+  if (f.closed_at) return '';
+  if (!st && /pass|defect/.test(segSt(f, x))) return doneBox('#EEEAF0', '#3F3846', 'ตรวจแล้ว · ไม่ต้องรายงานงานตัด');   // งานก่อนมีฟีเจอร์นี้
+  const kind = st ? 'finished' : 'started';
+  return `<button data-act="startWork" data-arg="${x.seq}:${kind}" style="height:${h}px;border:0;border-radius:12px;background:${SEG[st ? 'cut' : 'cutting'].solid};color:#fff;font-size:${h > 52 ? 17 : 15}px;font-weight:800">${st ? SEG.cut.glyph + ' แจ้งตัดเสร็จ · รูปหลังตัด' : SEG.cutting.glyph + ' เริ่มตัด · รูปก่อนตัด'}</button>`;
+}
+// ผู้รับจ้างแก้/ลบรายงานได้ เฉพาะช่วงที่ยังไม่ถูกตรวจ และรายงานที่ส่งถึงเซิร์ฟเวอร์แล้ว
+const workEditable = (f, x, w) => !isInsp() && !f.closed_at && !w.pending && /cutting|cut/.test(segSt(f, x));
+// หลักฐานงานตัดในแผงช่วง: รูปก่อน/หลัง + เตือนรูปที่ถ่ายห่างแนวสาย / รูปเก่า
+function workBlock(f, x) {
+  const one = kind => {
+    const w = workOf(x, kind), k = SEG[kind === 'started' ? 'cutting' : 'cut'], [title, min] = WORK[kind];
+    if (!w) return `<div style="padding:12px;border:2px dashed #C9E4E6;border-radius:12px;color:#5E5566;font-size:15px"><b style="color:${k.fg}">${k.glyph} ${title}</b> · ยังไม่ส่ง (อย่างน้อย ${min} รูป)</div>`;
+    const far = w.photos.map(ph => photoFar(f, x, ph)).filter(d => d != null && d > WORK_FAR_M), noGps = w.photos.filter(ph => ph.lat == null).length;
+    const nExif = w.photos.filter(ph => ph.src === 'exif').length, nDev = w.photos.filter(ph => ph.lat != null && ph.src !== 'exif').length, old = w.photos.filter(ph => oldPhoto(ph, w.at));
+    const sBtn = (act, label, red) => `<button data-act="${act}" data-arg="${x.seq}:${kind}" style="height:40px;padding:0 14px;border-radius:10px;font-size:14px;font-weight:700;background:#fff;border:1.5px solid ${red ? '#B3261E' : k.solid};color:${red ? '#B3261E' : k.fg}">${label}</button>`;
+    const ed = workEditable(f, x, w), del = ed && (kind === 'finished' || !workOf(x, 'finished'));
+    return `<div style="border:1px solid ${k.bg};border-left:5px solid ${k.solid};border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:8px;background:#fff">
+      <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap"><b style="color:${k.fg}">${k.glyph} ${title} · ${w.photos.length} รูป</b>${w.pending ? '<span style="padding:1px 8px;border-radius:6px;background:#2B2230;color:#FFE082;font-size:12px;font-weight:700">รอส่ง</span>' : ''}</div>
+      <div style="font-size:14px;color:#5E5566">${esc(w.who)} · ส่ง ${fmtAt(w.at)}${w.edited ? ` · <b style="color:#7A3B00">แก้ไขเมื่อ ${fmtAt(w.edited)}</b>` : ''}</div>
+      ${w.note ? `<div style="font-size:15px;background:#F6F3F8;padding:8px 12px;border-radius:8px">${esc(w.note)}</div>` : ''}
+      <div class="grid3">${w.photos.map(ph => photo(ph)).join('')}</div>
+      ${far.length ? `<div style="padding:8px 12px;border-radius:8px;background:#FFEFD6;color:#7A3B00;font-size:14px;font-weight:700">! ${far.length} รูปถ่ายห่างแนวช่วงเกิน ${WORK_FAR_M} ม. (ไกลสุด ${fmtDist(Math.max(...far))}) — ควรตรวจสอบ</div>` : ''}
+      ${old.length ? `<div style="padding:8px 12px;border-radius:8px;background:#FFEFD6;color:#7A3B00;font-size:14px;font-weight:700">! ${old.length} รูปถ่ายก่อนส่งรายงานเกิน ${WORK_OLD_H / 24} วัน (เก่าสุด ${fmtAt(old.map(ph => ph.taken).sort()[0])}) — อาจเป็นรูปเก่า</div>` : ''}
+      <div style="font-size:13px;color:#5E5566">พิกัด: จากไฟล์รูป ${nExif} · GPS เครื่องตอนเลือกรูป ${nDev}${noGps ? ' · ไม่มีพิกัด ' + noGps : ''} รูป</div>
+      ${ed ? `<div style="display:flex;gap:8px;justify-content:flex-end">${sBtn('editWork', 'แก้ไข')}${del ? sBtn('delWork', 'ลบรายงาน', true) : ''}</div>` : ''}</div>`;
+  };
+  return `<div style="display:flex;flex-direction:column;gap:8px"><div style="font-size:16px;font-weight:800">งานตัดของผู้รับจ้าง <span class="sub">· ก่อนตรวจรับ</span></div>${one('started')}${one('finished')}</div>`;
+}
 const pinBtn = (v, h) => `<button data-act="startDefect" data-arg="${v.x.seq}" class="bp" style="height:${h}px;font-size:${h > 52 ? 16 : 15}px;font-weight:800">+ ปักจุดบกพร่อง</button>`;
 
 function vFeeder() {
@@ -1092,7 +1250,7 @@ function vFeeder() {
   const L1 = (txt, sw) => `<div style="display:flex;align-items:center;gap:8px">${sw}${txt}</div>`, sq = (c, g, r, fs) => `<span class="ico" style="width:18px;height:18px;border-radius:${r};background:${c};font-size:${fs}px">${g}</span>`;
   const legend = S.legend ? `<div style="background:rgba(255,255,255,.97);border-radius:10px;box-shadow:0 2px 8px rgba(28,19,36,.2);padding:10px 12px;display:flex;flex-direction:column;gap:5px;font-size:13px;font-weight:600">
     <div style="font-size:12px;font-weight:800;color:#5E5566">ช่วงงานตัด (เส้น)</div>
-    ${L1('ยังไม่ตรวจ', '<span style="width:26px;height:0;border-top:5px dashed #6B6472"></span>')}${L1('มีจุดบกพร่องค้าง', '<span style="width:26px;height:5px;background:#C62828;border-radius:2px"></span>')}${L1('ผ่าน', '<span style="width:26px;height:5px;background:#2E7D32;border-radius:2px"></span>')}
+    ${L1('ยังไม่เริ่มตัด', '<span style="width:26px;height:0;border-top:5px dashed #6B6472"></span>')}${L1('กำลังตัด', '<span style="width:26px;height:0;border-top:5px dashed #00838F"></span>')}${L1('ตัดเสร็จ รอตรวจ', '<span style="width:26px;height:5px;background:#00636B;border-radius:2px"></span>')}${L1('มีจุดบกพร่องค้าง', '<span style="width:26px;height:5px;background:#C62828;border-radius:2px"></span>')}${L1('ผ่าน', '<span style="width:26px;height:5px;background:#2E7D32;border-radius:2px"></span>')}
     <div style="font-size:12px;font-weight:800;color:#5E5566;margin-top:4px">จุดบกพร่อง (หมุด)</div>
     ${L1('รอแก้ไข', sq('#C62828', '!', '50%', 11))}${L1('รอตรวจ', sq('#E87500', '⧗', '5px', 10))}${L1('ไม่ผ่าน ส่งกลับ', sq('#7F1D1D', '✕', '2px', 11))}${L1('ผ่าน', sq('#2E7D32', '✓', '50%', 11))}
     ${L1('ตำแหน่งของฉัน', '<span style="width:14px;height:14px;margin:0 2px;border-radius:50%;background:#1565C0;border:2px solid #fff;box-shadow:0 0 0 3px rgba(21,101,192,.3)"></span>')}</div>` : '';
@@ -1110,7 +1268,7 @@ function vFeeder() {
         <div style="flex:1;min-width:0"><div style="font-size:18px;font-weight:800;line-height:1.25">ช่วงที่ ${sv.x.seq} · ${sv.x.length_km.toFixed(2)} กม.</div><div style="font-size:14px;color:#5E5566">${esc(sv.short)}</div></div>
         <button data-act="clearSeg" aria-label="ปิด" style="flex:none;width:44px;height:44px;border:0;border-radius:22px;background:#F6F3F8;font-size:18px;color:#1C1324">✕</button></div>
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">${pill(sv.st, ';font-size:14px;font-weight:800;padding:3px 10px')}<span style="font-size:14px;color:#4A3F52">${sv.summary}</span></div>
-      ${insp ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">${passBtn(sv, 52)}${pinBtn(sv, 52)}</div>` : ''}
+      ${insp ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">${passBtn(sv, 52)}${pinBtn(sv, 52)}</div>` : workBtn(f, sv.x, 52)}
       <button data-act="viewList" style="height:44px;border:0;background:transparent;color:${P};font-size:15px;font-weight:700;text-decoration:underline">ดูรายละเอียดช่วงและจุดบกพร่อง ›</button></div>` : ''}
   </div>`;
   // ── แผงขวา: รายการ / ช่วง / จุด ──
@@ -1122,10 +1280,11 @@ function vFeeder() {
     panel = backHead('กลับไปรายการ', `<div style="font-size:18px;font-weight:800">ช่วงที่ ${x.seq}</div>`, f.code + ' · ' + f.line, pill(sv.st, ';flex:none;padding:5px 12px;font-size:14px;font-weight:800')) +
       `<div data-scroll="seg" style="flex:1;min-height:0;overflow:auto;padding:16px;display:grid;align-content:start;gap:18px">
         <div class="facts">${fact('แรงดัน', dash(x.voltage))}${fact('ความยาวช่วง', x.length_km.toFixed(2) + ' กม.')}${fact('ต้นที่สำรวจจัดทำแผน', x.plan_trees == null ? '–' : x.plan_trees + ' ต้น')}${fact('ความหนาแน่น', densText(x))}${fact('ต้นสำรวจราคากลาง', x.price_trees == null ? '–' : x.price_trees + ' ต้น')}${fact('ไฟล์ต้นทาง', x.source_file)}${fact('วันที่ผ่าน', segPassAt(f, x) + (x.pending ? ' (รอส่ง)' : ''))}${fact('ระยะจากคุณ', fmtDist(segDist(x)))}</div>
+        ${workBlock(f, x)}
         <div style="display:flex;flex-direction:column;gap:8px"><div style="font-size:16px;font-weight:800">จุดบกพร่องในช่วงนี้ (${sv.ds.length})</div>
           ${sv.ds.map(itemOf).map(it => `<div data-act="openDefect" data-arg="${esc(it.x.id)}" style="display:flex;gap:12px;align-items:center;padding:12px;border:1px solid #E3DCE8;border-radius:12px;cursor:pointer;background:${it.rowBg}">${defIco(it.k, 36, 17)}<div style="flex:1;min-width:0"><div style="font-size:16px;font-weight:700">${esc(it.x.issue_type)}</div><div style="font-size:14px;color:#5E5566"><span class="mono">${esc(it.x.code)}</span> · <b style="color:${it.k.fg}">${it.k.label}</b> · ตรวจครั้งที่ ${it.x.round_no}</div></div><span style="flex:none;font-size:24px;color:#9A8FA3">›</span></div>`).join('')}
           ${sv.ds.length ? '' : '<div style="padding:16px;border:2px dashed #DDD5E2;border-radius:12px;text-align:center;color:#5E5566;font-size:15px">ยังไม่มีจุดบกพร่องในช่วงนี้</div>'}</div></div>` +
-      footBox((insp ? (sv.out > 0 || sv.passed ? `<div style="font-size:14px;font-weight:700;color:${sv.passed ? '#1B5E20' : '#8E1B1B'};text-align:center">${sv.passed ? '✓ ช่วงนี้ผ่านแล้ว' : 'ยังมีจุดบกพร่องค้าง ' + sv.out + ' จุด — ผ่านทั้งช่วงไม่ได้'}</div>` : '') + `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">${passBtn(sv, 56)}${pinBtn(sv, 56)}</div>` : '') +
+      footBox((insp ? (sv.out > 0 || sv.passed ? `<div style="font-size:14px;font-weight:700;color:${sv.passed ? '#1B5E20' : '#8E1B1B'};text-align:center">${sv.passed ? '✓ ช่วงนี้ผ่านแล้ว' : 'ยังมีจุดบกพร่องค้าง ' + sv.out + ' จุด — ผ่านทั้งช่วงไม่ได้'}</div>` : '') + `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">${passBtn(sv, 56)}${pinBtn(sv, 56)}</div>` : workBtn(f, x, 56)) +
         `<button data-act="nav" data-arg="${mid[0]},${mid[1]}" class="bnav">นำทางไปช่วงนี้ · ${fmtDist(segDist(x))}</button>`);
   } else if (dDef) {
     const x = dDef, k = DEF[x.status], found = x.events[0], fixes = x.events.filter(h => h.kind === 'fix_submitted'), lastFix = fixes[fixes.length-1];
@@ -1158,18 +1317,18 @@ function vFeeder() {
         `<button data-act="nav" data-arg="${x.lat},${x.lng}" class="bnav">นำทางด้วย Google Maps · ${fmtDist(distTo(x.lat, x.lng))}</button>`);
   } else {
     const chipDefs = insp ? [['all', 'ทั้งหมด', () => true], ['open', 'รอแก้ไข', x => x.status === 'open'], ['submitted', 'รอตรวจ', x => x.status === 'submitted'], ['rejected', 'ไม่ผ่าน', x => x.status === 'rejected'], ['passed', 'ผ่าน', x => x.status === 'passed']]
-      : [['todo', 'ต้องแก้', x => x.status === 'open' || x.status === 'rejected'], ['submitted', 'รอตรวจ', x => x.status === 'submitted'], ['passed', 'ผ่าน', x => x.status === 'passed']];
-    const cd = chipDefs.find(c => c[0] === S.chip) || chipDefs[0];
+      : [['work', 'งานตัด', () => false], ['todo', 'ต้องแก้', x => x.status === 'open' || x.status === 'rejected'], ['submitted', 'รอตรวจ', x => x.status === 'submitted'], ['passed', 'ผ่าน', x => x.status === 'passed']];
+    const cd = chipDefs.find(c => c[0] === S.chip) || chipDefs[0], isWork = cd[0] === 'work';
     const groups = f.segments.map((x, i) => {
       const ds = dOf(f.id, x.seq).filter(cd[2]).sort((a, b) => (distTo(a.lat, a.lng) ?? 0) - (distTo(b.lat, b.lng) ?? 0)), dist = ds.length ? distTo(ds[0].lat, ds[0].lng) : segDist(x);
-      return { x, st: SEG[st.st[i]], ds, dist, sub: insp ? dash(x.plan_trees) + ' ต้น · ' + (x.density_label || '–') : 'ห่าง ' + fmtDist(dist) + ' · ' + ds.length + ' จุด', show: cd[0] === 'all' || ds.length > 0 };
+      return { x, st: SEG[st.st[i]], ds, dist, sub: insp ? dash(x.plan_trees) + ' ต้น · ' + (x.density_label || '–') : 'ห่าง ' + fmtDist(dist) + (isWork ? '' : ' · ' + ds.length + ' จุด'), show: cd[0] === 'all' || isWork || ds.length > 0 };
     }).filter(g => g.show);
-    if (!insp) groups.sort((a, b) => (a.dist ?? Infinity) - (b.dist ?? Infinity));
+    if (!insp && !isWork) groups.sort((a, b) => (a.dist ?? Infinity) - (b.dist ?? Infinity));
     panel = `<div style="flex:none;padding:14px 16px 12px;border-bottom:1px solid #ECE6EF;display:flex;flex-direction:column;gap:10px">
-        <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap"><div style="font-size:18px;font-weight:800">${insp ? 'ช่วงงานตัด ' + f.segments.length + ' ช่วง' : 'จุดที่ต้องแก้ไข'}</div><div style="font-size:14px;color:#5E5566">ผ่าน ${st.passN}/${f.segments.length} ช่วง · ${st.km.toFixed(2)} กม.</div></div>
-        <div style="height:8px;border-radius:4px;background:#EFEAF2;overflow:hidden"><div style="height:100%;width:${st.pct}%;background:#2E7D32"></div></div>
-        ${insp ? '' : '<div style="font-size:14px;color:#3E0F55;background:#F1E7F6;border-radius:10px;padding:8px 12px">จัดกลุ่มตามช่วง เรียงตามระยะทางจากตำแหน่งปัจจุบันของคุณ</div>'}
-        <div style="display:flex;gap:8px;overflow-x:auto;padding-bottom:2px">${chipDefs.map(([k, label, fn]) => chipBtn(k === cd[0], label + ' · ' + (k === 'all' ? f.segments.length + ' ช่วง' : st.ds.filter(fn).length), 'chip', k, CHIP_FILTER)).join('')}</div></div>
+        <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap"><div style="font-size:18px;font-weight:800">${insp ? 'ช่วงงานตัด ' + f.segments.length + ' ช่วง' : isWork ? 'งานตัดต้นไม้' : 'จุดที่ต้องแก้ไข'}</div><div style="font-size:14px;color:#5E5566">${isWork ? 'ตัดเสร็จ ' + st.cutN + '/' + f.segments.length + ' ช่วง' : 'ผ่าน ' + st.passN + '/' + f.segments.length + ' ช่วง'} · ${st.km.toFixed(2)} กม.</div></div>
+        <div style="height:8px;border-radius:4px;background:#EFEAF2;overflow:hidden"><div style="height:100%;width:${isWork ? Math.round(st.cutN / (f.segments.length || 1) * 100) : st.pct}%;background:${isWork ? SEG.cut.solid : '#2E7D32'}"></div></div>
+        ${insp ? '' : isWork ? `<div style="font-size:14px;color:${SEG.cut.fg};background:${SEG.cutting.bg};border-radius:10px;padding:8px 12px">แต่ละช่วง: กด <b>เริ่มตัด</b> ก่อนลงมือ (รูปก่อนตัด ≥ 1) และ <b>แจ้งตัดเสร็จ</b> เมื่อตัดครบช่วง (รูปหลังตัด ≥ 4: ต้นช่วง · กลางช่วง · ปลายช่วง · การเก็บกิ่ง) · ถ่ายที่หน้างาน ระบบบันทึกพิกัด GPS</div>` : '<div style="font-size:14px;color:#3E0F55;background:#F1E7F6;border-radius:10px;padding:8px 12px">จัดกลุ่มตามช่วง เรียงตามระยะทางจากตำแหน่งปัจจุบันของคุณ</div>'}
+        <div style="display:flex;gap:8px;overflow-x:auto;padding-bottom:2px">${chipDefs.map(([k, label, fn]) => chipBtn(k === cd[0], label + ' · ' + (k === 'all' ? f.segments.length + ' ช่วง' : k === 'work' ? st.cutN + '/' + f.segments.length : st.ds.filter(fn).length), 'chip', k, CHIP_FILTER)).join('')}</div></div>
       <div data-scroll="list" style="flex:1;overflow:auto;background:#F6F3F8;padding:10px;display:flex;flex-direction:column;gap:10px">
         ${groups.map(g => `<div style="flex:none;background:#fff;border:1px solid #E3DCE8;border-radius:12px;overflow:hidden">
           <div data-act="selectSeg" data-arg="${g.x.seq}" style="display:flex;align-items:center;gap:12px;padding:12px 14px;cursor:pointer;border-left:6px solid ${g.st.solid}">
@@ -1177,7 +1336,7 @@ function vFeeder() {
             <div style="flex:1;min-width:0"><div style="font-size:16px;font-weight:800">ช่วงที่ ${g.x.seq} <span class="sub">· ${g.x.length_km.toFixed(2)} กม.</span></div>
               <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:13px;color:#5E5566"><span style="padding:1px 8px;border-radius:999px;background:${g.st.bg};color:${g.st.fg};font-weight:700">${g.st.glyph} ${g.st.label}</span><span>${esc(g.sub)}</span></div></div>
             <span style="flex:none;font-size:24px;color:#9A8FA3">›</span></div>
-          ${g.ds.map(itemOf).map(vListItem).join('')}</div>`).join('')}
+          ${isWork ? `<div style="border-top:1px solid #ECE6EF;padding:10px 14px;display:grid;grid-template-columns:1fr 1.6fr;gap:8px">${(() => { const m = along(g.x.coords, .5); return `<button data-act="nav" data-arg="${m[0]},${m[1]}" class="bnav" style="border-radius:10px">นำทาง</button>`; })()}${workBtn(f, g.x, 48) || doneBox('#EEEAF0', '#3F3846', 'ปิดงานแล้ว')}</div>` : g.ds.map(itemOf).map(vListItem).join('')}</div>`).join('')}
         ${groups.length ? '' : `<div style="padding:40px 20px;text-align:center;color:#5E5566;font-size:16px">${insp ? 'ไม่มีจุดบกพร่องในสถานะนี้' : cd[0] === 'todo' ? 'ไม่มีจุดที่ต้องแก้ไข' : 'ไม่มีจุดในสถานะนี้'}</div>`}
       </div>`;
   }
@@ -1229,23 +1388,25 @@ function vAdmin() {
         <div style="padding:18px 20px;display:flex;flex-direction:column;gap:12px">
           <label class="lbl"><span>รหัสผ่านใหม่ (อย่างน้อย 6 ตัว)</span><input class="inp" data-in="adm.modal.pw" type="text" autocomplete="off" value="${esc(a.modal.pw)}"></label>
           <div style="display:flex;gap:10px"><button data-act="admPwCancel" class="bo" style="flex:1;height:50px">ยกเลิก</button><button data-act="admPwSave" class="bp" ${S.busy ? 'disabled' : ''} style="flex:1;height:50px">${S.busy ? 'กำลังบันทึก…' : 'บันทึก'}</button></div></div></div></div>` : '';
-  const cf = a.confirm, cu = cf && a.users.find(x => x.id === cf.id);
+  const cf = a.confirm, co = cf && cf.office && S.offices.find(o => o.id === cf.office), cu = cf && (co ? { username: co.id } : a.users.find(x => x.id === cf.id));
   const cbtn = (act, label, red) => `<button data-act="${act}" ${red && S.busy ? 'disabled' : ''} style="flex:1;height:52px;border-radius:12px;font-size:16px;font-weight:800;${red ? 'border:0;background:#B3261E;color:#fff' : 'border:1.5px solid #C9BED1;background:#fff;color:#1C1324'}">${label}</button>`;
   const confirm = cu ? `<div data-noprint data-act="noop" style="position:absolute;inset:0;z-index:1400;background:rgba(28,19,36,.6);display:flex;align-items:center;justify-content:center;padding:20px">
       <div style="width:min(100%,420px);background:#fff;border-radius:18px;overflow:hidden;box-shadow:0 12px 40px rgba(0,0,0,.35)">
-        <div style="background:#B3261E;color:#fff;padding:16px 20px"><div style="font-size:13px;font-weight:700;opacity:.9">ยืนยันขั้นที่ ${cf.step} จาก 2</div><div style="font-size:19px;font-weight:800">ลบบัญชี <span class="mono">${esc(cu.username)}</span></div></div>
+        <div style="background:#B3261E;color:#fff;padding:16px 20px"><div style="font-size:13px;font-weight:700;opacity:.9">ยืนยันขั้นที่ ${cf.step} จาก 2</div><div style="font-size:19px;font-weight:800">${co ? 'ลบการไฟฟ้า ' + esc(co.name) : `ลบบัญชี <span class="mono">${esc(cu.username)}</span>`}</div></div>
         <div style="padding:18px 20px;display:flex;flex-direction:column;gap:14px">
-          ${cf.step === 1 ? `<div style="font-size:15px">${ROLE_TH[cu.role]} · ${esc(cu.role === 'contractor' ? cu.company || '–' : cu.full_name || '–')} · ${esc(officeName(cu.office_id))}</div>
+          ${cf.step === 1 && co ? `<div style="background:#FDE7E7;border-radius:12px;padding:12px 14px;font-size:15px;color:#8E1B1B;line-height:1.6">• รหัส <b class="mono">${esc(co.id)}</b> จะถูกลบถาวร กู้คืนไม่ได้<br>• ลบได้เฉพาะการไฟฟ้าที่ไม่มีผู้ใช้และไม่มีงาน (Feeder) เหลืออยู่</div>
+            <div style="display:flex;gap:10px">${cbtn('admDelCancel', 'ยกเลิก')}${cbtn('admDelNext', 'ต่อไป', true)}</div>`
+          : cf.step === 1 ? `<div style="font-size:15px">${ROLE_TH[cu.role]} · ${esc(cu.role === 'contractor' ? cu.company || '–' : cu.full_name || '–')} · ${esc(officeName(cu.office_id))}</div>
             <div style="background:#FDE7E7;border-radius:12px;padding:12px 14px;font-size:15px;color:#8E1B1B;line-height:1.6">• บัญชีนี้จะเข้าสู่ระบบไม่ได้อีก<br>• ถ้ามีประวัติในระบบ (เคยบันทึกงาน/ส่งหลักฐาน) จะ <b>ปิดบัญชี</b> แทนการลบ เพื่อเก็บประวัติไว้ — เปิดกลับได้<br>• ถ้ายังไม่มีประวัติ จะ <b>ลบถาวร</b></div>
             <div style="display:flex;gap:10px">${cbtn('admDelCancel', 'ยกเลิก')}${cbtn('admDelNext', 'ต่อไป', true)}</div>`
           : `<label class="lbl"><span>กรอกรหัสยืนยันการลบ</span><input class="inp mono" data-in="adm.confirm.pin" type="password" inputmode="numeric" autocomplete="off" maxlength="6" value="${esc(cf.pin)}" style="text-align:center;font-size:24px;letter-spacing:8px"></label>
             ${cf.err ? `<div style="font-size:15px;font-weight:700;color:#B3261E">${esc(cf.err)}</div>` : ''}
-            <div style="display:flex;gap:10px">${cbtn('admDelBack', 'ย้อนกลับ')}${cbtn('admDelConfirm', S.busy ? 'กำลังลบ…' : 'ลบบัญชี', true)}</div>`}
+            <div style="display:flex;gap:10px">${cbtn('admDelBack', 'ย้อนกลับ')}${cbtn('admDelConfirm', S.busy ? 'กำลังลบ…' : co ? 'ลบการไฟฟ้า' : 'ลบบัญชี', true)}</div>`}
         </div></div></div>` : '';
   return `<div data-scroll="admin" class="scroll"><div style="max-width:1000px;margin:0 auto;padding:20px 16px 40px;display:flex;flex-direction:column;gap:16px">
     <div><div style="font-size:15px;color:#5E5566">ผู้ดูแลระบบ</div><div style="font-size:26px;font-weight:800;line-height:1.25">จัดการระบบ</div></div>
     <div class="card"><div style="font-size:18px;font-weight:800">การไฟฟ้า <span class="sub">· ${S.offices.length} แห่ง</span></div>
-      ${S.offices.map(o => `<div style="display:flex;justify-content:space-between;gap:8px;padding:10px 0;border-top:1px solid #ECE6EF"><span><b>${esc(o.name)}</b> <span class="mono" style="font-size:13px;color:#5E5566">${esc(o.id)}</span></span><span style="color:#5E5566;font-size:14px">${count(o.id)} ผู้ใช้</span></div>`).join('')}
+      ${S.offices.map(o => `<div style="display:flex;justify-content:space-between;gap:8px;padding:10px 0;border-top:1px solid #ECE6EF"><span><b>${esc(o.name)}</b> <span class="mono" style="font-size:13px;color:#5E5566">${esc(o.id)}</span></span><span style="display:flex;gap:10px;align-items:center"><span style="color:#5E5566;font-size:14px">${count(o.id)} ผู้ใช้</span><button data-act="admDelOffice" data-arg="${o.id}" style="height:36px;padding:0 12px;font-size:14px;font-weight:700;border-radius:10px;border:1.5px solid #B3261E;background:#fff;color:#B3261E">ลบ</button></span></div>`).join('')}
       <div style="background:#F6F3F8;border-radius:12px;padding:14px;display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr));gap:10px;align-items:end">
         <label class="lbl">${lab('รหัส (a-z 0-9)')}${inp('adm.office.id', a.office.id, 'เช่น mdh', 'autocapitalize="off" maxlength="10"')}</label>
         <label class="lbl">${lab('ชื่อการไฟฟ้า')}${inp('adm.office.name', a.office.name, 'เช่น กฟส.เมืองมุกดาหาร')}</label>
@@ -1316,6 +1477,21 @@ function vSheet() {
       <div style="display:flex;flex-direction:column;gap:8px"><div class="h15">ประเภทปัญหา <span style="color:#B3261E">*</span></div><div style="display:flex;flex-wrap:wrap;gap:8px">${TYPES.map((t, i) => chipBtn(dt.type === t, t, 'draftType', i, CHIP_TYPE)).join('')}</div></div>
       <label style="display:flex;flex-direction:column;gap:8px"><span class="h15">หมายเหตุ</span><textarea class="ta" data-in="draft.note" rows="3" placeholder="เช่น กิ่งห่างสาย 22 kV ประมาณ 1 ม. ด้านทิศเหนือ">${esc(dt.note)}</textarea></label>
       <div style="display:flex;flex-direction:column;gap:8px"><div class="h15">รอบการตรวจ</div><div class="seg2">${[1, 2, 3].map(r => { const on = dt.round === r; return `<button data-act="draftRound" data-arg="${r}" style="background:${on ? '#fff' : 'transparent'};color:${on ? P : '#5E5566'};box-shadow:${on ? '0 1px 3px rgba(0,0,0,.15)' : 'none'}">ครั้งที่ ${r}</button>`; }).join('')}</div></div>`;
+  } else if (S.sheet === 'work') {
+    const fm = S.form, x = f.segments.find(y => y.seq === fm.seq), [wt, min, max, tip] = WORK[fm.kind], k = SEG[fm.kind === 'started' ? 'cutting' : 'cut'];
+    const near = S.user ? Math.round(snapAll(S.user.lat, S.user.lng, f).find(o => o.seq === x.seq).d) : null;
+    title = (fm.editId ? 'แก้ไข' : '') + wt; sub = f.code + ' · ช่วงที่ ' + x.seq + ' · ' + x.length_km.toFixed(2) + ' กม.';
+    saveLabel = fm.editId ? 'บันทึกการแก้ไข' : offline ? 'บันทึกไว้ในเครื่อง' : (fm.kind === 'started' ? 'ยืนยันเริ่มตัด' : 'ยืนยันตัดเสร็จ'); saveBg = offline && !fm.editId ? '#2B2230' : k.solid;
+    const old = fm.photos.filter(ph => oldPhoto(ph, nowIso())).length, nExif = fm.photos.filter(ph => ph.src === 'exif').length;
+    const grid = `<div class="grid3">${fm.photos.map((ph, i) => `<div style="position:relative">${photo(ph)}<button data-act="workRmPhoto" data-arg="${i}" aria-label="เอารูปออก" style="position:absolute;top:4px;right:4px;width:32px;height:32px;border:0;border-radius:16px;background:rgba(28,19,36,.75);color:#fff;font-size:15px;font-weight:800">✕</button></div>`).join('')}${fm.photos.length < max ? camInput('workPhotos') : ''}</div>
+      <div style="display:flex;justify-content:space-between;gap:8px;font-size:13px;color:#5E5566"><span>ถ่ายที่หน้างาน · พิกัดจากไฟล์รูป ${nExif}/${fm.photos.length} รูป</span>${LIVE ? '' : '<button data-act="demoWorkPhoto" class="link">+ รูปตัวอย่าง</button>'}</div>
+      ${old ? `<div style="padding:10px 12px;border-radius:10px;background:#FFEFD6;color:#7A3B00;font-size:14px;font-weight:700">! ${old} รูปถ่ายไว้นานกว่า ${WORK_OLD_H / 24} วัน — ผู้ตรวจจะเห็นคำเตือน "รูปเก่า"</div>` : ''}`;
+    body = `<div style="padding:12px 14px;border-radius:12px;background:${k.bg};color:${k.fg};font-size:15px;font-weight:600">${tip}</div>
+      ${near == null ? '<div style="padding:10px 12px;border-radius:10px;background:#FFEFD6;color:#7A3B00;font-size:14px;font-weight:700">! ยังไม่มีสัญญาณ GPS — รูปจะไม่มีพิกัดแนบไป</div>'
+        : near > WORK_FAR_M ? `<div style="padding:10px 12px;border-radius:10px;background:#FFEFD6;color:#7A3B00;font-size:14px;font-weight:700">! ตอนนี้คุณอยู่ห่างแนวช่วงนี้ ${fmtDist(near)} — ควรถ่ายรูปที่หน้างาน ผู้ตรวจจะเห็นคำเตือนนี้</div>`
+        : `<div style="font-size:14px;color:#1B5E20;font-weight:700">✓ อยู่ในแนวช่วงนี้ (ห่าง ${fmtDist(near)}) · บันทึกพิกัดกับทุกรูป</div>`}
+      <div style="display:flex;flex-direction:column;gap:8px"><div class="h15">รูปถ่าย <span style="color:#B3261E">*</span> <span class="sub">· ${fm.photos.length} รูป (ขั้นต่ำ ${min} · สูงสุด ${max})</span></div>${grid}</div>
+      <label style="display:flex;flex-direction:column;gap:8px"><span class="h15">หมายเหตุ</span><textarea class="ta" data-in="form.note" rows="3" placeholder="${fm.kind === 'started' ? 'เช่น เริ่มจากเสาต้นช่วง ใช้รถกระเช้า 1 คัน' : 'เช่น ตัดครบตามแผน เก็บกิ่งออกจากพื้นที่แล้ว'}">${esc(fm.note)}</textarea></label>`;
   } else {
     const fm = S.form, x = S.defects.find(y => y.id === fm.id), isFix = S.sheet === 'fix', before = x.events[0].photos[0];
     title = isFix ? 'ส่งหลักฐานการแก้ไข' : 'ไม่ผ่าน · ส่งกลับแก้ใหม่'; sub = x.code + ' · ช่วงที่ ' + x.seq;
@@ -1376,7 +1552,7 @@ function render() {
   if (/feeder|report|fdash/.test(S.screen) && !curF()) Object.assign(S, { screen: 'dash', cur: null, sheet: null, draft: null, del: null });
   const f = curF(), screen = S.screen === 'login' ? vLogin() : S.screen === 'dash' ? vDash() : S.screen === 'import' ? vImport() : S.screen === 'admin' ? vAdmin()
     : !f ? '' : S.screen === 'feeder' ? vFeeder() : S.screen === 'report' ? vReport() : S.screen === 'fdash' ? vFDash() : '';
-  shell.innerHTML = vHeader() + `<div data-main style="flex:1;min-height:0;position:relative;display:flex;flex-direction:column">${screen}${vSheet()}${vNotif()}${vDelete()}${vToast()}</div>`;
+  shell.innerHTML = vHeader() + `<div data-main style="flex:1;min-height:0;position:relative;display:flex;flex-direction:column">${screen}${vSheet()}${vNotif()}${vDelete()}${vWorkConfirm()}${vToast()}</div>`;
   shell.querySelectorAll('[data-scroll]').forEach(el => { if (sc[el.dataset.scroll]) el.scrollTop = sc[el.dataset.scroll]; });
   const ms = shell.querySelector('[data-slot=map]'); if (ms) ms.replaceWith(mapEl);
   const mn = shell.querySelector('[data-slot=mini]'); if (mn) mn.replaceWith(miniEl);
@@ -1461,6 +1637,7 @@ const ACT = {
     admRun(async () => { await admApi.setActive(id, !u.active); return (u.active ? 'ปิดบัญชี ' : 'เปิดบัญชี ') + u.username + ' แล้ว'; });
   },
   admDel: id => set({ adm: { ...S.adm, confirm: { step: 1, id, pin: '', err: null } } }),
+  admDelOffice: office => set({ adm: { ...S.adm, confirm: { step: 1, office, pin: '', err: null } } }),
   admDelCancel: () => set({ adm: { ...S.adm, confirm: null } }),
   admDelNext: () => set({ adm: { ...S.adm, confirm: { ...S.adm.confirm, step: 2, pin: '', err: null } } }),
   admDelBack: () => set({ adm: { ...S.adm, confirm: { ...S.adm.confirm, step: 1, pin: '', err: null } } }),
@@ -1468,9 +1645,23 @@ const ACT = {
     const cf = S.adm.confirm, id = cf.id, u = S.adm.users.find(x => x.id === id);
     if (cf.pin !== DELETE_PIN) return set({ adm: { ...S.adm, confirm: { ...cf, pin: '', err: 'รหัสไม่ถูกต้อง' } } });
     S.adm.confirm = null;
+    if (cf.office) { const name = officeName(cf.office); return admRun(async () => { await admApi.removeOffice(cf.office); if (S.adm.filter === cf.office) S.adm.filter = ''; return 'ลบ ' + name + ' แล้ว'; }); }
     admRun(async () => { const r = await admApi.remove(id); return r.deleted ? 'ลบ ' + u.username + ' แล้ว' : u.username + ' มีประวัติในระบบ — ปิดบัญชีแทนการลบ'; });
   },
-  closeSheet, saveSheet: () => ({ defect: saveDefect, fix: saveFix, reject: saveReject })[S.sheet](),
+  closeSheet, saveSheet: () => ({ defect: saveDefect, fix: saveFix, reject: saveReject, work: saveWork })[S.sheet](),
+  editWork(a) {
+    if (LIVE && !S.online) return showToast('ไม่มีสัญญาณ — การแก้ไขรายงานต้องออนไลน์', 'off');
+    const [seq, kind] = a.split(':'), w = workOf(curF().segments.find(x => x.seq === +seq), kind);
+    set({ sheet: 'work', err: null, form: { seq: +seq, kind, note: w.note, photos: [...w.photos], editId: w.id } });
+  },
+  delWork(a) {
+    if (LIVE && !S.online) return showToast('ไม่มีสัญญาณ — การลบรายงานต้องออนไลน์', 'off');
+    const [seq, kind] = a.split(':'); set({ wconf: { mode: 'del', seq: +seq, kind, step: 1 } });
+  },
+  workRmPhoto: i => set({ form: { ...S.form, photos: S.form.photos.filter((_, j) => j !== +i) } }),
+  wconfCancel: () => set({ wconf: null }), wconfNext: () => set({ wconf: { ...S.wconf, step: 2 } }), wconfBack: () => set({ wconf: { ...S.wconf, step: 1 } }), wconfGo,
+  startWork: a => { const [seq, kind] = a.split(':'); set({ sheet: 'work', err: null, form: { seq: +seq, kind, note: '', photos: [] } }); },
+  demoWorkPhoto: () => { const x = curF().segments.find(y => y.seq === S.form.seq), m = along(x.coords, .5); set({ form: { ...S.form, photos: [...S.form.photos, { ...demoPhoto(), lat: m[0], lng: m[1] }].slice(0, WORK[S.form.kind][2]) }, err: null }); },
   draftSeg: seq => set({ draft: { ...S.draft, seq: +seq, manual: true } }),
   draftType: i => set({ draft: { ...S.draft, type: TYPES[+i] }, err: null }),
   draftRound: r => set({ draft: { ...S.draft, round: +r } }),
@@ -1482,7 +1673,16 @@ const ACT = {
 const FILE = {
   impPick: impPickFiles,
   draftPhotos: async e => { const fs = Array.from(e.target.files || []); e.target.value = ''; const p = await readPhotos(fs); set({ draft: { ...S.draft, photos: [...S.draft.photos, ...p] } }); },
-  sheetPhotos: async e => { const fs = Array.from(e.target.files || []); e.target.value = ''; const p = await readPhotos(fs); set({ form: { ...S.form, photos: [...S.form.photos, ...p] }, err: null }); }
+  sheetPhotos: async e => { const fs = Array.from(e.target.files || []); e.target.value = ''; const p = await readPhotos(fs); set({ form: { ...S.form, photos: [...S.form.photos, ...p] }, err: null }); },
+  // พิกัด: EXIF ของรูป (src exif) ก่อน · ไม่มี → GPS เครื่องตอนเลือกรูป (src gps) · taken = เวลาถ่ายจาก EXIF
+  workPhotos: async e => {
+    const fs = Array.from(e.target.files || []), u = S.user, max = WORK[S.form.kind][2]; e.target.value = '';
+    const [exs, ps] = await Promise.all([Promise.all(fs.map(readExif)), readPhotos(fs)]);
+    const p = ps.map((ph, i) => { const x = exs[i]; return { ...ph, taken: x.taken || null, ...(x.lat != null ? { lat: x.lat, lng: x.lng, src: 'exif' } : u ? { lat: u.lat, lng: u.lng, src: 'gps' } : {}) }; });
+    const all = [...S.form.photos, ...p];
+    if (all.length > max) showToast('แนบได้สูงสุด ' + max + ' รูป — ใช้ ' + max + ' รูปแรก', 'err', 5000);
+    set({ form: { ...S.form, photos: all.slice(0, max) }, err: null });
+  }
 };
 shell.addEventListener('click', e => { const el = e.target.closest('[data-act]'); if (!el || el.disabled) return; ACT[el.dataset.act](el.dataset.arg); });
 // พิมพ์ = เก็บค่าเงียบๆ (ไม่ render → focus ไม่หลุด); data-rr = render ตอน change

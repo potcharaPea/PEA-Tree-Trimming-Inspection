@@ -97,7 +97,22 @@ create table if not exists defect_events (
   created_at timestamptz not null default now()
 );
 
+-- ── งานตัดของผู้รับจ้าง (ก่อนตรวจรับ): started = เริ่มตัด + รูปก่อนตัด, finished = ตัดเสร็จ + รูปหลังตัด ──
+create table if not exists segment_works (
+  id         uuid primary key default gen_random_uuid(),   -- id มาจากเครื่อง (ส่งซ้ำตอน sync ได้)
+  segment_id uuid not null references segments on delete cascade,
+  feeder_id  uuid not null references feeders on delete cascade,
+  kind       text not null check (kind in ('started', 'finished')),
+  note       text,
+  photos     jsonb not null default '[]',   -- [{"path":"MDA03R-04/<segment>/<work>_1.jpg","label":"IMG_1.jpg","lat":16.5,"lng":104.6}]
+  actor_id   uuid references profiles default auth.uid(),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz                      -- ผู้รับจ้างแก้ไขรายงานล่าสุดเมื่อ (null = ไม่เคยแก้)
+);
+alter table segment_works add column if not exists updated_at timestamptz;   -- สำหรับฐานข้อมูลที่สร้างก่อนมีคอลัมน์นี้
+
 create index if not exists segments_feeder_idx on segments (feeder_id);
+create index if not exists works_feeder_idx    on segment_works (feeder_id);
 create index if not exists defects_feeder_idx  on defects (feeder_id);
 create index if not exists events_defect_idx   on defect_events (defect_id);
 
@@ -142,12 +157,15 @@ alter table segments           enable row level security;
 alter table inspection_rounds  enable row level security;
 alter table defects            enable row level security;
 alter table defect_events      enable row level security;
+alter table segment_works      enable row level security;
 
 -- หน้า login ต้องเห็นรายชื่อการไฟฟ้าก่อนล็อกอิน
 drop policy if exists offices_read on offices;
 drop policy if exists offices_write on offices;
 create policy offices_read on offices for select using (true);
 create policy offices_write on offices for insert to authenticated with check (is_sysadmin());
+drop policy if exists offices_delete on offices;
+create policy offices_delete on offices for delete to authenticated using (is_sysadmin());   -- FK กันลบถ้ายังมีผู้ใช้/งาน
 
 drop policy if exists profiles_read on profiles;
 -- ผู้ใช้เห็นคนในการไฟฟ้าตน · ผู้ดูแลระบบเห็นทุกคน (การสร้าง/แก้บัญชีทำผ่าน Edge Function admin-users เท่านั้น)
@@ -192,28 +210,50 @@ create policy events_con_insert on defect_events for insert to authenticated
   with check (kind = 'fix_submitted' and actor_id = auth.uid()
     and exists (select 1 from defects d where d.id = defect_id and d.status in ('open', 'rejected') and can_see_feeder(d.feeder_id)));
 
+drop policy if exists works_read on segment_works;
+drop policy if exists works_con_insert on segment_works;
+create policy works_read on segment_works for select to authenticated using (can_see_feeder(feeder_id));
+-- ผู้รับจ้าง: insert ได้อย่างเดียว เฉพาะช่วงของ feeder ที่ตนรับงาน
+create policy works_con_insert on segment_works for insert to authenticated
+  with check (actor_id = auth.uid() and not is_inspector() and can_see_feeder(feeder_id)
+    and exists (select 1 from segments s where s.id = segment_id and s.feeder_id = segment_works.feeder_id));
+-- ผู้รับจ้างแก้/ลบได้เฉพาะรายงานของตน (แอปกันไว้อีกชั้น: เฉพาะช่วงที่ยังไม่ถูกตรวจ)
+drop policy if exists works_con_update on segment_works;
+drop policy if exists works_con_delete on segment_works;
+create policy works_con_update on segment_works for update to authenticated
+  using (actor_id = auth.uid() and can_see_feeder(feeder_id)) with check (actor_id = auth.uid() and can_see_feeder(feeder_id));
+create policy works_con_delete on segment_works for delete to authenticated using (actor_id = auth.uid() and can_see_feeder(feeder_id));
+
 -- ════════════════════════════════════════════════════════════════
--- STORAGE: bucket "photos" (private) path {feeder_code}/{defect_id}/{event_id}_{n}.jpg
--- สิทธิ์ตรวจจาก defect_id (โฟลเดอร์ที่ 2) → เห็น feeder นั้นหรือไม่
+-- STORAGE: bucket "photos" (private)
+--   จุดบกพร่อง: {feeder_code}/{defect_id}/{event_id}_{n}.jpg · งานตัด: {feeder_code}/{segment_id}/{work_id}_{n}.jpg
+-- สิทธิ์ตรวจจากโฟลเดอร์ที่ 2 (defect_id หรือ segment_id) → feeder ของมัน
 -- ════════════════════════════════════════════════════════════════
 insert into storage.buckets (id, name, public) values ('photos', 'photos', false) on conflict (id) do nothing;
 
+create or replace function photo_feeder(folder text) returns uuid
+language sql stable security definer set search_path = public as $$
+  select coalesce((select feeder_id from defects where id::text = folder), (select feeder_id from segments where id::text = folder))
+$$;
 drop policy if exists photos_read on storage.objects;
 drop policy if exists photos_insert on storage.objects;
 create policy photos_read on storage.objects for select to authenticated
-  using (bucket_id = 'photos' and exists (select 1 from defects d where d.id::text = (storage.foldername(name))[2] and can_see_feeder(d.feeder_id)));
+  using (bucket_id = 'photos' and can_see_feeder(photo_feeder((storage.foldername(name))[2])));
 create policy photos_insert on storage.objects for insert to authenticated
-  with check (bucket_id = 'photos' and exists (select 1 from defects d where d.id::text = (storage.foldername(name))[2] and can_see_feeder(d.feeder_id)));
--- ลบงาน: ผู้ตรวจลบรูปของ feeder ในการไฟฟ้าตน (ต้องลบรูปก่อนลบ feeder เพราะอ้าง defect)
+  with check (bucket_id = 'photos' and can_see_feeder(photo_feeder((storage.foldername(name))[2])));
+-- ลบงาน: ผู้ตรวจลบรูปของ feeder ในการไฟฟ้าตน (ต้องลบรูปก่อนลบ feeder เพราะอ้าง defect/segment)
 drop policy if exists photos_delete on storage.objects;
 create policy photos_delete on storage.objects for delete to authenticated
-  using (bucket_id = 'photos' and exists (select 1 from defects d where d.id::text = (storage.foldername(name))[2] and can_edit_feeder(d.feeder_id)));
+  using (bucket_id = 'photos' and can_edit_feeder(photo_feeder((storage.foldername(name))[2])));
 
 -- ════════════════════════════════════════════════════════════════
 -- REALTIME
 -- ════════════════════════════════════════════════════════════════
 do $$ begin
   alter publication supabase_realtime add table feeders, segments, defects, defect_events;
+exception when duplicate_object then null; end $$;
+do $$ begin
+  alter publication supabase_realtime add table segment_works;
 exception when duplicate_object then null; end $$;
 
 -- ════════════════════════════════════════════════════════════════
