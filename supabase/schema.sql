@@ -111,8 +111,27 @@ create table if not exists segment_works (
 );
 alter table segment_works add column if not exists updated_at timestamptz;   -- สำหรับฐานข้อมูลที่สร้างก่อนมีคอลัมน์นี้
 
+-- ── ขอดับไฟเพื่อตัดต้นไม้ (รายช่วง): ผู้รับจ้างขอ + เสนอวัน → ผู้ตรวจยืนยันวันดับไฟ หรือปฏิเสธ ──
+create table if not exists outage_requests (
+  id         uuid primary key default gen_random_uuid(),
+  segment_id uuid not null references segments on delete cascade,
+  feeder_id  uuid not null references feeders on delete cascade,
+  want_date  date not null,                 -- วันที่ผู้รับจ้างขอ
+  want_time  text not null default '',      -- ช่วงเวลา เช่น 09:00–12:00
+  note       text,                          -- ตำแหน่ง/เหตุผล เช่น ต้นยางใหญ่คร่อมสาย เสาที่ 12–14
+  status     text not null default 'requested' check (status in ('requested', 'confirmed', 'rejected')),
+  ok_date    date,                          -- วันดับไฟที่ผู้ตรวจยืนยัน (อาจเลื่อนจากที่ขอ)
+  ok_time    text,
+  reply      text,                          -- ข้อความจากผู้ตรวจ / เหตุผลที่ปฏิเสธ
+  actor_id   uuid references profiles default auth.uid(),
+  created_at timestamptz not null default now(),
+  decided_by uuid references profiles,
+  decided_at timestamptz
+);
+
 create index if not exists segments_feeder_idx on segments (feeder_id);
 create index if not exists works_feeder_idx    on segment_works (feeder_id);
+create index if not exists outage_feeder_idx   on outage_requests (feeder_id);
 create index if not exists defects_feeder_idx  on defects (feeder_id);
 create index if not exists events_defect_idx   on defect_events (defect_id);
 
@@ -224,6 +243,22 @@ create policy works_con_update on segment_works for update to authenticated
   using (actor_id = auth.uid() and can_see_feeder(feeder_id)) with check (actor_id = auth.uid() and can_see_feeder(feeder_id));
 create policy works_con_delete on segment_works for delete to authenticated using (actor_id = auth.uid() and can_see_feeder(feeder_id));
 
+alter table outage_requests enable row level security;
+drop policy if exists outage_read on outage_requests;
+drop policy if exists outage_con_insert on outage_requests;
+drop policy if exists outage_con_delete on outage_requests;
+drop policy if exists outage_insp on outage_requests;
+create policy outage_read on outage_requests for select to authenticated using (can_see_feeder(feeder_id));
+-- ผู้รับจ้าง: ขอได้เฉพาะช่วงของ feeder ที่ตนรับงาน · ยกเลิก (ลบ) ได้เฉพาะคำขอของตนที่ยังรอยืนยัน
+create policy outage_con_insert on outage_requests for insert to authenticated
+  with check (actor_id = auth.uid() and not is_inspector() and status = 'requested' and can_see_feeder(feeder_id)
+    and exists (select 1 from segments s where s.id = segment_id and s.feeder_id = outage_requests.feeder_id));
+create policy outage_con_delete on outage_requests for delete to authenticated
+  using (actor_id = auth.uid() and status = 'requested' and can_see_feeder(feeder_id));
+-- ผู้ตรวจ: ยืนยันวัน / ปฏิเสธ
+create policy outage_insp on outage_requests for update to authenticated
+  using (can_edit_feeder(feeder_id)) with check (can_edit_feeder(feeder_id));
+
 -- ── ภาพรวมทุกการไฟฟ้า (หน้า login, ไม่ต้องล็อกอิน, ดูอย่างเดียว) ──
 -- คืนเฉพาะตัวเลขสรุป + สถานะรายช่วง: ไม่มีรูป พิกัด ชื่อผู้ใช้ หรือหมายเหตุ
 -- สถานะช่วงต้องตรงกับ segSt() ใน index.html: defect > pass > cut > cutting > none
@@ -301,6 +336,9 @@ do $$ begin
 exception when duplicate_object then null; end $$;
 do $$ begin
   alter publication supabase_realtime add table segment_works;
+exception when duplicate_object then null; end $$;
+do $$ begin
+  alter publication supabase_realtime add table outage_requests;
 exception when duplicate_object then null; end $$;
 
 -- ════════════════════════════════════════════════════════════════

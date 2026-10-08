@@ -31,6 +31,10 @@ a{color:#5B1A7A}
 .leaflet-div-icon{background:transparent;border:0}
 .mono{font-family:'IBM Plex Mono',monospace}
 .scroll{flex:1;overflow:auto}
+/* ทัชสกรีน: เลื่อนแบบมีแรงส่ง ไม่ลากทั้งหน้าไปด้วย (กันดึงลงแล้วรีโหลดโดยไม่ตั้งใจ) · แตะปุ่มตอบสนองทันที ไม่รอ double-tap zoom */
+.scroll,[data-scroll]{-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
+html,body{overscroll-behavior-y:none}
+button,[data-act],a,label{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
 .card{background:#fff;border:1px solid #E3DCE8;border-radius:14px;padding:16px;display:flex;flex-direction:column;gap:12px}
 .tile{background:#fff;border:1px solid #E3DCE8;border-radius:12px;padding:12px 14px}
 .tile b{display:block;font-size:26px;font-weight:800;line-height:1.1}
@@ -237,6 +241,8 @@ const db = {
       q(sb.from('defects').select('*').order('code_no'), 'defects'),
       q(sb.from('defect_events').select('*').order('created_at'), 'defect_events'),
       q(sb.from('segment_works').select('*').order('created_at'), 'segment_works')]);
+    // ตารางขอดับไฟมาทีหลัง — ฐานข้อมูลที่ยังไม่ได้รัน schema.sql รอบใหม่ ส่วนอื่นต้องยังโหลดได้
+    const ot = await q(sb.from('outage_requests').select('*').order('created_at'), 'outage_requests').catch(() => []);
     S.profiles = pr.map(p => ({ ...p, office: p.office_id }));
     const paths = [...ev, ...wk].flatMap(e => (e.photos || []).map(p => p.path)).filter(Boolean);
     const urls = {};
@@ -248,6 +254,7 @@ const db = {
       const segments = sg.filter(s => s.feeder_id === f.id).map(s => (segById[s.id] = { ...s, length_km: +s.length_km, coords: s.geom_geojson.coordinates.map(c => [c[1], c[0]]), pending: false, works: worksOf(s.id) }));
       return { id: f.id, code: f.code, line: f.line_name, office: f.office_id, contractor_id: cid || null, contractor: con ? con.company || con.full_name : '–', closed_at: f.closed_at, imported_at: f.created_at, segments };
     });
+    S.outages = ot.map(o => ({ ...o, seq: (segById[o.segment_id] || {}).seq, who: whoOf(o.actor_id), by: whoOf(o.decided_by) }));
     S.defects = df.map(d => ({ id: d.id, code: pad4(d.code_no), feeder_id: d.feeder_id, segment_id: d.segment_id, seq: (segById[d.segment_id] || {}).seq, lat: d.lat, lng: d.lng,
       issue_type: d.issue_type, status: d.status, round_no: d.round_no,
       events: ev.filter(e => e.defect_id === d.id).map(e => ({ id: e.id, kind: e.kind, round_no: e.round_no, at: e.created_at, note: e.note || '', pending: false, who: whoOf(e.actor_id), actor_id: e.actor_id,
@@ -328,7 +335,22 @@ const db = {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'defects' }, reload)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'defect_events' }, p => { onEvent(p.new); reload(); })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'segment_works' }, p => { if (p.eventType === 'INSERT') onWork(p.new); reload(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'outage_requests' }, p => { onOutage(p); reload(); })
       .subscribe();
+  },
+  // ── ขอดับไฟ: op = add | upd | del · ออนไลน์เท่านั้น (นัดวันต้องให้อีกฝ่ายเห็นทันที ไม่เข้าคิวออฟไลน์) ──
+  async outage(op, p, id) {
+    if (!LIVE) {
+      if (op === 'add') S.outages.push({ ...p.row, id: uuid(), seq: p.seq, status: 'requested', actor_id: S.me.id, who: myName(), created_at: nowIso() });
+      else if (op === 'del') S.outages = S.outages.filter(o => o.id !== id);
+      else Object.assign(S.outages.find(o => o.id === id), p.row, { by: myName() });
+      return;
+    }
+    if (!S.online) throw new Error('ไม่มีสัญญาณ — การขอ/ยืนยันวันดับไฟต้องออนไลน์');
+    const t = sb.from('outage_requests');
+    if (op === 'add') return void await q(t.insert(p.row), 'outage');
+    const r = await q((op === 'del' ? t.delete() : t.update(p.row)).eq('id', id).select('id'), 'outage');
+    if (!r.length) throw new Error(op === 'del' ? 'ยกเลิกไม่ได้ — ผู้ตรวจอาจยืนยันวันไปแล้ว' : 'ไม่มีสิทธิ์แก้คำขอนี้');
   },
   unsubscribe() { if (db.channel) { sb.removeChannel(db.channel); db.channel = null; } }
 };
@@ -521,7 +543,7 @@ const S = Object.assign(LIVE ? { feeders: [], defects: [], user: null, gpsErr: n
   offices: LIVE ? [] : MOCK_OFFICES, profiles: LIVE ? [] : MOCK_USERS,
   screen: 'login', office: 'kce', role: 'inspector', loginId: LIVE ? '' : 'somchai.j', password: LIVE ? '' : 'demo1234', loginErr: null, me: null, credits: false, busy: false,
   cur:null, view:'map', panel:{ mode:'list' }, chip:'all', sheet:null, draft:null, form:null, err:null,
-  online:true, syncing:false, queue:0, notifs:[], unread:0, showNotif:false, toast:null, fresh: new Set(),
+  online:true, syncing:false, queue:0, notifs:[], unread:0, showNotif:false, toast:null, fresh: new Set(), outages: [],
   base:'osm', legend:true, imp:{ step:'pick' }, wide:true, seq:432
 });
 function set(patch) { Object.assign(S, typeof patch === 'function' ? patch(S) : patch); render(); }
@@ -577,7 +599,7 @@ const myFeeders = () => S.feeders.filter(f => f.office === S.me.office && (isIns
 
 // ── toast ──
 let toastT;
-function showToast(text, kind, ms) { clearTimeout(toastT); set({ toast: { text, kind } }); toastT = setTimeout(() => set({ toast: null }), ms || 3800); }
+function showToast(text, kind, ms) { clearTimeout(toastT); S.toast = { text, kind }; softRender(); toastT = setTimeout(() => { S.toast = null; softRender(); }, ms || 3800); }
 
 // ════════════════════════════════════════════════════════════════
 // ACTIONS
@@ -598,7 +620,7 @@ async function run(work) {
   }
 }
 // กำลังดูไส้ในงานสาธารณะ (RO): ไม่โหลดทับด้วยข้อมูลของบัญชีตน
-async function refresh() { if (RO()) return; try { await db.load(); render(); } catch (e) { showToast('โหลดข้อมูลไม่สำเร็จ: ' + e.message, 'err', 6000); } }
+async function refresh() { if (RO()) return; try { await db.load(); softRender(); } catch (e) { showToast('โหลดข้อมูลไม่สำเร็จ: ' + e.message, 'err', 6000); } }
 async function login() {
   if (!S.loginId.trim() || !S.password) return set({ loginErr: 'กรุณากรอกชื่อผู้ใช้และรหัสผ่าน' });
   if (LIVE && !S.online) return set({ loginErr: 'ไม่มีสัญญาณ — เข้าสู่ระบบครั้งแรกต้องออนไลน์' });
@@ -616,7 +638,11 @@ async function login() {
 async function enter(u) {
   S.me = u;
   try { await db.load(); } catch (e) { showToast('โหลดข้อมูลไม่สำเร็จ: ' + e.message, 'err', 6000); }
-  set({ busy: false, loginErr: null, password: LIVE ? '' : S.password, screen: 'dash', cur: null, sheet: null, draft: null, showNotif: false });
+  // รีเฟรช = กลับหน้าเดิม (งาน/แท็บ/ช่องที่เปิดอยู่) ถ้างานนั้นยังอยู่ · ล็อกอินใหม่หลัง logout = หน้าแรก (logout ล้างไว้แล้ว)
+  let nav = null; try { nav = JSON.parse(sessionStorage.getItem(NAV_KEY)); } catch (e) {}
+  const back = nav && /^(feeder|report|fdash)$/.test(nav.screen) && S.feeders.some(f => f.id === nav.cur)
+    ? { screen: nav.screen, cur: nav.cur, view: nav.view || 'map', panel: nav.panel || { mode: 'list' }, chip: nav.chip || 'all' } : { screen: 'dash', cur: null };
+  set({ busy: false, loginErr: null, password: LIVE ? '' : S.password, ...back, sheet: null, draft: null, showNotif: false });
   clearTimeout(rtT);
   if (LIVE) { db.subscribe(onRemoteEvent); startGps(); flush(); }
   // ponytail: โหมดสาธิตจำลอง realtime ที่ 12 วิ
@@ -627,7 +653,8 @@ async function logout() {
   if (LIVE && S.queue) return showToast('ยังมีข้อมูลรอส่ง ' + S.queue + ' รายการ — ต่อเน็ตให้ส่งครบก่อนออกจากระบบ', 'err', 6000);
   clearTimeout(rtT); db.unsubscribe(); await db.signOut(); if (LIVE) await snap.clear();
   if (RO()) Object.assign(S, S.pubBak, { pubView: false, pubBak: null });
-  set({ me: null, screen: 'login', showNotif: false, sheet: null, draft: null, ...(LIVE ? { feeders: [], defects: [], notifs: [], unread: 0 } : {}) });
+  try { sessionStorage.removeItem(NAV_KEY); } catch (e) {}
+  set({ me: null, screen: 'login', showNotif: false, sheet: null, draft: null, ...(LIVE ? { feeders: [], defects: [], notifs: [], unread: 0, outages: [] } : {}) });
 }
 // ── GPS (LIVE) — ponytail: โหมดสาธิตใช้ตำแหน่งจำลองคงที่ ──
 let gpsId = null;
@@ -638,7 +665,7 @@ function startGps() {
     const moved = !S.user || hav([S.user.lat, S.user.lng], [u.lat, u.lng]) > 10;
     S.user = u; S.gpsErr = null;
     // ไม่ render ระหว่างพิมพ์ (focus/cursor จะหลุด) และไม่ render ถ้าขยับไม่ถึง 10 ม.
-    if (moved && S.me && !/INPUT|TEXTAREA|SELECT/.test((document.activeElement || {}).tagName)) render();
+    if (moved && S.me && !/INPUT|TEXTAREA|SELECT/.test((document.activeElement || {}).tagName)) softRender();
   }, e => { S.gpsErr = e.code === 1 ? 'ไม่ได้รับอนุญาตให้ใช้ตำแหน่ง — เปิดสิทธิ์ตำแหน่งในเบราว์เซอร์' : 'หาตำแหน่ง GPS ไม่ได้'; },
   { enableHighAccuracy: true, maximumAge: 5000, timeout: 30000 });
 }
@@ -695,6 +722,17 @@ function onWork(w) {
   if (!isInsp() || w.actor_id === S.me.id) return;
   const f = S.feeders.find(x => x.id === w.feeder_id), s = f && f.segments.find(x => x.id === w.segment_id); if (!s) return;
   showToast('อัปเดตทันที: ' + f.code + ' ช่วงที่ ' + s.seq + (w.kind === 'started' ? ' ผู้รับจ้างเริ่มตัด' : ' ผู้รับจ้างแจ้งตัดเสร็จ'), 'rt', 4500);
+}
+// ขอดับไฟ: ผู้รับจ้างขอ → แจ้งเตือนผู้ตรวจ (กระดิ่ง) · ผู้ตรวจยืนยัน/ไม่อนุมัติ → toast ของผู้รับจ้างที่ขอ
+function onOutage(p) {
+  const o = p.new || {}; if (!o.id || !S.me) return;
+  const f = S.feeders.find(x => x.id === o.feeder_id), s = f && f.segments.find(x => x.id === o.segment_id); if (!s) return;
+  const at = f.code + ' ช่วงที่ ' + s.seq;
+  if (p.eventType === 'INSERT' && isInsp() && o.actor_id !== S.me.id) {
+    S.notifs = [{ id: Date.now(), feederId: f.id, seq: s.seq, text: whoOf(o.actor_id) + ' ขอดับไฟ ' + at, sub: 'วันที่ขอ ' + fmtDay(o.want_date) + (o.want_time ? ' · ' + o.want_time : ''), at: nowIso() }, ...S.notifs];
+    S.unread++; showToast('อัปเดตทันที: ผู้รับจ้างขอดับไฟ ' + at, 'rt', 4500);
+  } else if (p.eventType === 'UPDATE' && !isInsp() && o.actor_id === S.me.id && o.status !== 'requested')
+    showToast(o.status === 'confirmed' ? 'นัดดับไฟแล้ว: ' + at + ' · ' + fmtDay(o.ok_date) + (o.ok_time ? ' ' + o.ok_time : '') : 'คำขอดับไฟ ' + at + ' ไม่อนุมัติ', 'rt', 6000);
 }
 function simRealtime() {
   if (!isInsp() || S.screen === 'login') return;
@@ -770,6 +808,20 @@ function saveWork() {
     const r = await db.do('addWork', { id: uuid(), feederId: f.id, feederCode: f.code, segId: s.id, seq: s.seq, kind: fm.kind, note: fm.note, photos: fm.photos });
     Object.assign(S, { sheet: null, form: null, err: null });
     return pendMsg(r, t + ' แล้ว', t + ' · บันทึกไว้ในเครื่อง รอส่ง');
+  });
+}
+// ขอดับไฟ (ผู้รับจ้าง) / ยืนยันวัน · ไม่อนุมัติ (ผู้ตรวจ) — reject = กดปุ่มไม่อนุมัติ ต้องมีเหตุผล
+function saveOutage(reject) {
+  const fm = S.form, f = curF(), s = f.segments.find(x => x.seq === fm.seq), t = 'ช่วงที่ ' + s.seq, req = fm.mode === 'req';
+  if (!reject && !fm.date) return set({ err: 'กรุณาเลือกวันที่ดับไฟ' });
+  if (!reject && fm.date < todayKey()) return set({ err: 'วันที่ดับไฟต้องไม่ใช่วันที่ผ่านมาแล้ว' });
+  if (reject && !fm.note.trim()) return set({ err: 'กรุณาระบุเหตุผลที่ไม่อนุมัติในช่อง "ข้อความถึงผู้รับจ้าง"' });
+  const dec = { decided_by: S.me.id, decided_at: nowIso() };
+  run(async () => {
+    if (req) await db.outage('add', { seq: s.seq, row: { segment_id: s.id, feeder_id: f.id, want_date: fm.date, want_time: fm.time.trim(), note: fm.note.trim() || null } });
+    else await db.outage('upd', { row: reject ? { status: 'rejected', reply: fm.note.trim(), ...dec } : { status: 'confirmed', ok_date: fm.date, ok_time: fm.time.trim(), reply: fm.note.trim() || null, ...dec } }, fm.id);
+    Object.assign(S, { sheet: null, form: null, err: null });
+    return [req ? 'ส่งคำขอดับไฟ ' + t + ' แล้ว · รอผู้ตรวจยืนยันวัน' : reject ? 'ไม่อนุมัติคำขอดับไฟ ' + t : 'ยืนยันวันดับไฟ ' + t + ' · ' + fmtDay(fm.date), 'ok'];
   });
 }
 // แก้/ลบรายงานงานตัด: ชั้นที่ 1 สรุปสิ่งที่จะเปลี่ยน → ชั้นที่ 2 ยืนยันอีกครั้ง (ไม่ใช้รหัส)
@@ -927,7 +979,7 @@ function syncMain() {
   }
   if (tilesBase !== S.base) { if (tiles) tiles.remove(); tiles = L.tileLayer(TILES[S.base][0], { maxZoom: 19, attribution: TILES[S.base][1] }).addTo(map); tiles.bringToBack(); tilesBase = S.base; }
   const selSeg = S.panel.mode === 'segment' ? S.panel.seq : null, selDef = S.panel.mode === 'defect' ? S.panel.id : null, ds = dOf(f.id), dr = S.draft;
-  const sg = JSON.stringify([f.id, f.segments.length, f.segments.map(x => segSt(f, x)), ds.map(d => [d.id, d.status, d.lat, d.lng]), selSeg, selDef, dr && [dr.lat, dr.lng, dr.seq], S.user]);
+  const sg = JSON.stringify([f.id, f.segments.length, f.segments.map(x => { const o = outOn(f, x); return segSt(f, x) + (o ? o.status : ''); }), ds.map(d => [d.id, d.status, d.lat, d.lng]), selSeg, selDef, dr && [dr.lat, dr.lng, dr.seq], S.user]);
   if (sg !== sig) {
     sig = sg; layer.clearLayers();
     f.segments.forEach(s => {
@@ -936,6 +988,7 @@ function syncMain() {
       L.polyline(s.coords, { color: c, weight: 6, dashArray: st === 'none' ? '8 9' : st === 'cutting' ? '14 7' : null, interactive: false }).addTo(layer);
       L.polyline(s.coords, { color: '#000', weight: 26, opacity: 0 }).on('click', e => { L.DomEvent.stopPropagation(e); if (S.draft) return moveDraft(e.latlng.lat, e.latlng.lng); selectSeg(s.seq); }).addTo(layer);
       L.marker(along(s.coords, .5), { icon: numIcon(s.seq, sel ? P : c, 28, 8) }).on('click', () => selectSeg(s.seq)).addTo(layer);
+      const o = outOn(f, s); if (o) L.marker(along(s.coords, .5), { icon: boltIcon(o), zIndexOffset: 400 }).on('click', () => selectSeg(s.seq)).addTo(layer);
     });
     ds.forEach(d => {
       const k = DEF[d.status], sel = d.id === selDef, z = sel ? 38 : 30;
@@ -1275,6 +1328,46 @@ function workBlock(f, x) {
   };
   return `<div style="display:flex;flex-direction:column;gap:8px"><div style="font-size:16px;font-weight:800">งานตัดของผู้รับจ้าง <span class="sub">· ก่อนตรวจรับ</span></div>${one('started')}${one('finished')}</div>`;
 }
+// ── ขอดับไฟเพื่อตัดต้นไม้ (รายช่วง) ──
+const OUT_TIMES = ['08:30–12:00', '13:00–16:30', '08:30–16:30'];
+// นัดดับไฟแล้ว = เหลือง-ดำ (ป้ายเตือนไฟฟ้า) — ไม่ใช้เขียว เพราะเขียวในแอปคือ "ผ่าน"
+const OUT = { requested: ['รอยืนยันวันดับไฟ', '#FFEFD6', '#7A3B00'], confirmed: ['นัดดับไฟแล้ว', '#FFF3C4', '#5C4300'], rejected: ['ไม่อนุมัติ', '#F6D5D5', '#6B1414'] };
+const OUT_C = '#B45309', OUT_Y = '#F9C513';
+// สัญลักษณ์ดับไฟ: รอยืนยัน = วงโปร่ง ขอบเหลือง · นัดแล้ว = เหลืองทึบ ขอบดำ (แยกด้วยรูปทรง ไม่ต้องพึ่งสีอย่างเดียว)
+const boltDot = (o, z) => `<span title="${OUT[o.status][0]}" style="width:${z}px;height:${z}px;flex:none;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;box-shadow:0 1px 4px rgba(0,0,0,.35);${o.status === 'confirmed' ? `background:${OUT_Y};border:2px solid #1C1324` : `background:#fff;border:2.5px solid ${OUT_Y}`}">${I_BOLT(Math.round(z * .58), '#1C1324')}</span>`;
+const I_BOLT = (s, c) => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="${c || 'currentColor'}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;vertical-align:-3px"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg>`;
+const todayKey = () => { const d = new Date(); return d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate()); };
+const outsOf = (f, seq) => (S.outages || []).filter(o => o.feeder_id === f.id && o.seq === seq);
+// คำขอดับไฟล่าสุดของช่วงที่ยังไม่ถูกปฏิเสธ (รอยืนยัน / นัดแล้ว) — ใช้ทั้งป้ายในรายการและสัญลักษณ์บนแผนที่
+const outOn = (f, x) => outsOf(f, x.seq).filter(y => y.status !== 'rejected').pop();
+// สัญลักษณ์บนแผนที่: ติดมุมบนขวาของเลขช่วง
+const boltIcon = o => L.divIcon({ className: '', iconSize: [22, 22], iconAnchor: [-4, 30], html: boltDot(o, 22) });
+// ป้ายในรายการช่วง
+function outBadge(f, x) {
+  const o = outOn(f, x); if (!o) return '';
+  const [lb, bg, fg] = OUT[o.status];
+  return `<span style="display:inline-flex;align-items:center;gap:3px;padding:1px 8px;border-radius:999px;background:${bg};color:${fg};font-weight:700">${I_BOLT(13)}${o.status === 'confirmed' ? 'ดับไฟ ' + fmtDay(o.ok_date) : lb}</span>`;
+}
+function outageBlock(f, x) {
+  const list = outsOf(f, x.seq), insp = isInsp(), live = !RO() && !f.closed_at;
+  const canReq = live && !insp && !list.some(o => o.status === 'requested');
+  if (!list.length && !canReq) return '';
+  const card = o => {
+    const [lb, bg, fg] = OUT[o.status], mine = !insp && S.me && o.actor_id === S.me.id;
+    const btn = (act, label, red) => `<button data-act="${act}" data-arg="${esc(o.id)}" style="height:40px;padding:0 14px;border-radius:10px;font-size:14px;font-weight:700;background:#fff;border:1.5px solid ${red ? '#B3261E' : OUT_C};color:${red ? '#B3261E' : OUT_C}">${label}</button>`;
+    return `<div style="border:1px solid ${bg};border-left:5px solid ${fg};border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:6px;background:#fff;min-width:0">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap"><b style="color:${OUT_C};display:flex;align-items:center;gap:4px">${I_BOLT(16)} ขอดับไฟ</b><span class="pill" style="background:${bg};color:${fg}">${lb}</span></div>
+      <div style="font-size:15px">วันที่ขอ <b>${fmtDay(o.want_date)}</b>${o.want_time ? ' · ' + esc(o.want_time) : ''}</div>
+      ${o.status === 'confirmed' ? `<div style="font-size:16px;font-weight:800;color:#1C1324;background:${OUT_Y};border-radius:8px;padding:8px 12px">นัดดับไฟ ${fmtDay(o.ok_date)}${o.ok_time ? ' · ' + esc(o.ok_time) : ''}</div>` : ''}
+      ${o.note ? `<div style="font-size:15px;background:#F6F3F8;padding:8px 12px;border-radius:8px;overflow-wrap:anywhere">${esc(o.note)}</div>` : ''}
+      ${o.reply ? `<div style="font-size:14px;color:${fg};overflow-wrap:anywhere"><b>ผู้ตรวจ:</b> ${esc(o.reply)}</div>` : ''}
+      <div style="font-size:13px;color:#5E5566">${esc(o.who || '')} · ขอเมื่อ ${fmtAt(o.created_at)}${o.decided_at ? ' · ตอบเมื่อ ' + fmtAt(o.decided_at) : ''}</div>
+      ${live && (insp ? o.status !== 'rejected' : mine && o.status === 'requested') ? `<div style="display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">${insp ? btn('decideOutage', o.status === 'confirmed' ? 'เลื่อนวัน / แก้ไข' : 'ยืนยันวันดับไฟ') : btn('cancelOutage', 'ยกเลิกคำขอ', true)}</div>` : ''}</div>`;
+  };
+  return `<div style="display:flex;flex-direction:column;gap:8px"><div style="font-size:16px;font-weight:800">การดับไฟ <span class="sub">· สำหรับจุดที่ต้องดับไฟตัด</span></div>
+    ${list.slice().reverse().map(card).join('')}
+    ${canReq ? `<button data-act="reqOutage" data-arg="${x.seq}" style="height:48px;border:1.5px dashed ${OUT_C};border-radius:12px;background:#FFF8EE;color:${OUT_C};font-size:16px;font-weight:800;display:flex;align-items:center;justify-content:center;gap:6px">${I_BOLT(18)} ขอดับไฟช่วงนี้ · นัดวัน</button>` : ''}</div>`;
+}
 const pinBtn = (v, h) => `<button data-act="startDefect" data-arg="${v.x.seq}" class="bp" style="height:${h}px;font-size:${h > 52 ? 16 : 15}px;font-weight:800">+ ปักจุดบกพร่อง</button>`;
 
 function vFeeder() {
@@ -1288,6 +1381,8 @@ function vFeeder() {
     ${L1('ยังไม่เริ่มตัด', '<span style="width:26px;height:0;border-top:5px dashed #6B6472"></span>')}${L1('กำลังตัด', '<span style="width:26px;height:0;border-top:5px dashed #00838F"></span>')}${L1('ตัดเสร็จ รอตรวจ', '<span style="width:26px;height:5px;background:#00636B;border-radius:2px"></span>')}${L1('มีจุดบกพร่องค้าง', '<span style="width:26px;height:5px;background:#C62828;border-radius:2px"></span>')}${L1('ผ่าน', '<span style="width:26px;height:5px;background:#2E7D32;border-radius:2px"></span>')}
     <div style="font-size:12px;font-weight:800;color:#5E5566;margin-top:4px">จุดบกพร่อง (หมุด)</div>
     ${L1('รอแก้ไข', sq('#C62828', '!', '50%', 11))}${L1('รอตรวจ', sq('#E87500', '⧗', '5px', 10))}${L1('ไม่ผ่าน ส่งกลับ', sq('#7F1D1D', '✕', '2px', 11))}${L1('ผ่าน', sq('#2E7D32', '✓', '50%', 11))}
+    <div style="font-size:12px;font-weight:800;color:#5E5566;margin-top:4px">ต้องดับไฟตัด (ติดเลขช่วง)</div>
+    ${L1('ขอดับไฟ · รอยืนยัน', boltDot({ status: 'requested' }, 20))}${L1('นัดดับไฟแล้ว', boltDot({ status: 'confirmed' }, 20))}
     ${L1('ตำแหน่งของฉัน', '<span style="width:14px;height:14px;margin:0 2px;border-radius:50%;background:#1565C0;border:2px solid #fff;box-shadow:0 0 0 3px rgba(21,101,192,.3)"></span>')}</div>` : '';
   const mapBtn = 'width:48px;height:48px;border:0;border-radius:12px;background:#fff;box-shadow:0 2px 8px rgba(28,19,36,.22);display:flex;align-items:center;justify-content:center';
   const showFab = insp && !RO() && !S.sheet && !f.closed_at && (wide || mode !== 'segment'), showPeek = !wide && !listOn && mode === 'segment' && !S.sheet;
@@ -1308,7 +1403,7 @@ function vFeeder() {
   </div>`;
   // ── แผงขวา: รายการ / ช่วง / จุด ──
   let panel = '';
-  const backHead = (label, title, sub, badge) => `<div style="flex:none;display:flex;align-items:center;gap:8px;padding:8px 12px 8px 4px;border-bottom:1px solid #ECE6EF"><button data-act="panelBack" aria-label="${label}" style="flex:none;width:48px;height:48px;border:0;border-radius:24px;background:transparent;color:${P};font-size:32px;line-height:1">‹</button><div style="flex:1;min-width:0">${title}<div style="font-size:13px;color:#5E5566">${esc(sub)}</div></div>${badge}</div>`;
+  const backHead = (label, title, sub, badge) => `<div style="flex:none;display:flex;align-items:center;gap:8px;padding:8px 12px 8px 4px;border-bottom:1px solid #ECE6EF"><button data-act="panelBack" aria-label="${label}" style="flex:none;width:48px;height:48px;border:0;border-radius:24px;background:transparent;color:${P};font-size:32px;line-height:1">‹</button><div style="flex:1;min-width:0">${title}<div style="font-size:13px;color:#5E5566;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere">${esc(sub)}</div></div>${badge}</div>`;
   const footBox = inner => `<div data-noprint style="flex:none;padding:12px 16px 16px;border-top:1px solid #ECE6EF;display:flex;flex-direction:column;gap:8px">${inner}</div>`;
   if (mode === 'segment') {
     const x = sv.x, mid = along(x.coords, .5);
@@ -1316,6 +1411,7 @@ function vFeeder() {
       `<div data-scroll="seg" style="flex:1;min-height:0;overflow:auto;padding:16px;display:grid;align-content:start;gap:18px">
         <div class="facts">${fact('แรงดัน', dash(x.voltage))}${fact('ความยาวช่วง', x.length_km.toFixed(2) + ' กม.')}${fact('ต้นที่สำรวจจัดทำแผน', x.plan_trees == null ? '–' : x.plan_trees + ' ต้น')}${fact('ความหนาแน่น', densText(x))}${fact('ต้นสำรวจราคากลาง', x.price_trees == null ? '–' : x.price_trees + ' ต้น')}${fact('ไฟล์ต้นทาง', x.source_file)}${fact('วันที่ผ่าน', segPassAt(f, x) + (x.pending ? ' (รอส่ง)' : ''))}${fact('ระยะจากคุณ', fmtDist(segDist(x)))}</div>
         ${workBlock(f, x)}
+        ${outageBlock(f, x)}
         <div style="display:flex;flex-direction:column;gap:8px"><div style="font-size:16px;font-weight:800">จุดบกพร่องในช่วงนี้ (${sv.ds.length})</div>
           ${sv.ds.map(itemOf).map(it => `<div data-act="openDefect" data-arg="${esc(it.x.id)}" style="display:flex;gap:12px;align-items:center;padding:12px;border:1px solid #E3DCE8;border-radius:12px;cursor:pointer;background:${it.rowBg}">${defIco(it.k, 36, 17)}<div style="flex:1;min-width:0"><div style="font-size:16px;font-weight:700">${esc(it.x.issue_type)}</div><div style="font-size:14px;color:#5E5566"><span class="mono">${esc(it.x.code)}</span> · <b style="color:${it.k.fg}">${it.k.label}</b> · ตรวจครั้งที่ ${it.x.round_no}</div></div><span style="flex:none;font-size:24px;color:#9A8FA3">›</span></div>`).join('')}
           ${sv.ds.length ? '' : '<div style="padding:16px;border:2px dashed #DDD5E2;border-radius:12px;text-align:center;color:#5E5566;font-size:15px">ยังไม่มีจุดบกพร่องในช่วงนี้</div>'}</div></div>` +
@@ -1370,7 +1466,7 @@ function vFeeder() {
           <div data-act="selectSeg" data-arg="${g.x.seq}" style="display:flex;align-items:center;gap:12px;padding:12px 14px;cursor:pointer;border-left:6px solid ${g.st.solid}">
             <div style="flex:none;width:40px;height:40px;border-radius:10px;background:#F6F3F8;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:800">${g.x.seq}</div>
             <div style="flex:1;min-width:0"><div style="font-size:16px;font-weight:800">ช่วงที่ ${g.x.seq} <span class="sub">· ${g.x.length_km.toFixed(2)} กม.</span></div>
-              <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:13px;color:#5E5566"><span style="padding:1px 8px;border-radius:999px;background:${g.st.bg};color:${g.st.fg};font-weight:700">${g.st.glyph} ${g.st.label}</span><span>${esc(g.sub)}</span></div></div>
+              <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:13px;color:#5E5566"><span style="padding:1px 8px;border-radius:999px;background:${g.st.bg};color:${g.st.fg};font-weight:700">${g.st.glyph} ${g.st.label}</span>${outBadge(f, g.x)}<span>${esc(g.sub)}</span></div></div>
             <span style="flex:none;font-size:24px;color:#9A8FA3">›</span></div>
           ${isWork ? `<div style="border-top:1px solid #ECE6EF;padding:10px 14px;display:grid;grid-template-columns:1fr 1.6fr;gap:8px">${(() => { const m = along(g.x.coords, .5); return `<button data-act="nav" data-arg="${m[0]},${m[1]}" class="bnav" style="border-radius:10px">นำทาง</button>`; })()}${workBtn(f, g.x, 48) || doneBox('#EEEAF0', '#3F3846', 'ปิดงานแล้ว')}</div>` : g.ds.map(itemOf).map(vListItem).join('')}</div>`).join('')}
         ${groups.length ? '' : `<div style="padding:40px 20px;text-align:center;color:#5E5566;font-size:16px">${insp ? 'ไม่มีจุดบกพร่องในสถานะนี้' : cd[0] === 'todo' ? 'ไม่มีจุดที่ต้องแก้ไข' : 'ไม่มีจุดในสถานะนี้'}</div>`}
@@ -1427,7 +1523,7 @@ function vOverview() {
     ${o.loading && !o.rows ? '<div style="color:#5E5566;padding:20px 0">กำลังโหลดข้อมูล…</div>' : !o.rows ? '' : `
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px">${tile(S.offices.length, 'การไฟฟ้า', P, true)}${tile(all.n, 'Feeder', P, true)}${tile(all.km.toFixed(1), 'ระยะทางรวม (กม.)', '#1C1324', true)}${tile(all.cutPct + '%', 'ตัดแล้ว', '#00636B', true)}${tile(all.passPct + '%', 'ตรวจผ่าน', '#2E7D32', true)}${tile(all.out, 'จุดค้างแก้', all.out ? '#C62828' : '#5E5566', true)}${tile(all.closed + '/' + all.n, 'ปิดงานแล้ว', '#1B5E20', true)}</div>
     <div class="card" style="gap:10px"><div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:baseline"><div style="font-size:18px;font-weight:800">รายการไฟฟ้า</div><div style="font-size:14px;color:#5E5566">แตะแถวเพื่อดู Feeder ของการไฟฟ้านั้น</div></div>
-      <div style="overflow-x:auto;border:1px solid #E3DCE8;border-radius:10px"><div style="min-width:720px">
+      <div style="overflow-x:auto;border:1px solid #E3DCE8;border-radius:10px"><div style="min-width:750px"><!-- = คอลัมน์ขั้นต่ำ 662 + ช่องไฟ 56 + padding 28 (เดิม 720 คอลัมน์สุดท้ายล้นกรอบ) -->
         <div style="display:grid;${COLS};gap:8px;padding:10px 14px;background:#F1E7F6;font-size:13px;font-weight:800;color:#3E0F55"><span>การไฟฟ้า</span><span>ตัดแล้ว</span><span>ผ่าน</span><span>จุดค้าง</span><span>ปิดงาน</span><span>Feeder</span><span>กม.</span><span>สถานะรายช่วง</span></div>
         ${offices.map(offRow).join('')}</div></div>
       <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:13px;color:#4A3F52">${legend}</div>
@@ -1533,7 +1629,7 @@ function vReport() {
         ${[['ผู้รับจ้าง', f.contractor], ['ผู้ตรวจรับ', S.me.full_name], ['วันที่นำเข้าข้อมูล', fmtDay(f.imported_at)], ['วันที่ปิดงาน', f.closed_at ? fmtDay(f.closed_at) : 'ยังไม่ปิดงาน']].map(([l, v]) => `<div><div style="font-size:13px;color:#5E5566">${l}</div><div style="font-weight:700">${esc(v)}</div></div>`).join('')}</div>
       <div data-rtiles style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px">${t2(f.segments.length, 'ช่วงงานตัด', '#1C1324')}${t2(st.km.toFixed(2), 'ระยะทาง (กม.)', '#1C1324')}${t2(st.passN + '/' + f.segments.length, 'ช่วงที่ผ่าน', '#2E7D32')}${t2(st.ds.length, 'จุดบกพร่องทั้งหมด', '#1C1324')}${t2(st.out + st.rev, 'จุดค้าง (ยังไม่ผ่าน)', st.out + st.rev ? '#C62828' : '#1B5E20')}${t2(st.rounds || '–', 'จำนวนรอบตรวจ', P)}</div>
       <div style="display:flex;flex-direction:column;gap:8px"><div style="font-size:16px;font-weight:800">ผลการตรวจรายช่วง</div>
-        <div data-ptable style="overflow-x:auto;border:1px solid #E3DCE8;border-radius:10px"><div style="min-width:960px">
+        <div data-ptable style="overflow-x:auto;border:1px solid #E3DCE8;border-radius:10px"><div style="min-width:1080px"><!-- = คอลัมน์ 980 + ช่องไฟ 72 + padding 24 (เดิม 960 คอลัมน์สุดท้ายล้นกรอบ) -->
           <div class="prow" style="display:grid;${COLS};gap:8px;padding:10px 12px;background:#F1E7F6;font-size:13px;font-weight:800;color:#3E0F55"><span>ช่วง</span><span>แรงดัน</span><span>ต้น</span><span>ความหนาแน่น</span><span>กม.</span><span>แจ้งตัดเสร็จ</span><span>จุดบกพร่อง</span><span>รอบตรวจ</span><span>สถานะ</span><span>วันที่ผ่าน</span></div>
           ${f.segments.map((x, i) => { const ds = dOf(f.id, x.seq), sg = SEG[st.st[i]]; return `<div class="row prow" style="${COLS};padding:10px 12px;font-size:14px"><b>${x.seq}</b><span>${esc(dash(x.voltage))}</span><span>${dash(x.plan_trees)}</span><span>${esc(densText(x))}</span><span>${x.length_km.toFixed(2)}</span><span>${finAt(x)}</span><span>${ds.length || '–'}</span><span>${ds.length ? Math.max(...ds.map(y => y.round_no)) : (x.passed_at ? 1 : '–')}</span><span><span style="padding:2px 8px;border-radius:999px;background:${sg.bg};color:${sg.fg};font-weight:700;white-space:nowrap">${sg.glyph} ${sg.label}</span></span><span>${segPassAt(f, x)}</span></div>`; }).join('')}
           <div class="prow" style="display:grid;${COLS};gap:8px;padding:10px 12px;border-top:2px solid ${P};font-size:14px;font-weight:800"><span>รวม</span><span></span><span>${st.trees}</span><span></span><span>${st.km.toFixed(2)}</span><span>${st.cutN}/${f.segments.length}</span><span>${st.ds.length}</span><span></span><span>ผ่าน ${st.passN}/${f.segments.length}</span><span></span></div>
@@ -1583,6 +1679,22 @@ function vSheet() {
         : `<div style="font-size:14px;color:#1B5E20;font-weight:700">✓ อยู่ในแนวช่วงนี้ (ห่าง ${fmtDist(near)}) · บันทึกพิกัดกับทุกรูป</div>`}
       <div style="display:flex;flex-direction:column;gap:8px"><div class="h15">รูปถ่าย <span style="color:#B3261E">*</span> <span class="sub">· ${fm.photos.length} รูป (ขั้นต่ำ ${min} · สูงสุด ${max})</span></div>${grid}</div>
       <label style="display:flex;flex-direction:column;gap:8px"><span class="h15">หมายเหตุ</span><textarea class="ta" data-in="form.note" rows="3" placeholder="${fm.kind === 'started' ? 'เช่น เริ่มจากเสาต้นช่วง ใช้รถกระเช้า 1 คัน' : 'เช่น ตัดครบตามแผน เก็บกิ่งออกจากพื้นที่แล้ว'}">${esc(fm.note)}</textarea></label>`;
+  } else if (S.sheet === 'outage') {
+    const fm = S.form, x = f.segments.find(y => y.seq === fm.seq), dec = fm.mode === 'decide', o = dec && S.outages.find(y => y.id === fm.id);
+    title = dec ? 'ยืนยันวันดับไฟ' : 'ขอดับไฟเพื่อตัดต้นไม้'; sub = f.code + ' · ช่วงที่ ' + x.seq + ' · ' + x.length_km.toFixed(2) + ' กม.';
+    saveLabel = dec ? 'ยืนยันวันดับไฟ' : 'ส่งคำขอดับไฟ'; saveBg = dec ? '#2E7D32' : OUT_C;
+    const inp = 'height:48px;border:1.5px solid #C9BED1;border-radius:10px;padding:0 12px;font-size:16px;color:#1C1324;background:#fff;width:100%';
+    body = (dec ? `<div style="padding:12px 14px;border-radius:12px;background:#FFF8EE;display:flex;flex-direction:column;gap:4px;min-width:0">
+          <b style="color:${OUT_C}">${esc(o.who || 'ผู้รับจ้าง')} ขอวันที่ ${fmtDay(o.want_date)}${o.want_time ? ' · ' + esc(o.want_time) : ''}</b>
+          ${o.note ? `<div style="font-size:15px;overflow-wrap:anywhere">${esc(o.note)}</div>` : ''}</div>`
+        : `<div style="padding:12px 14px;border-radius:12px;background:#FFF8EE;color:${OUT_C};font-size:15px;font-weight:600">สำหรับจุดที่ต้องดับไฟก่อนตัด เช่น ต้นไม้คร่อมสาย/ใกล้สายแรงสูง · เลือกวันที่ต้องการ แล้วผู้ตรวจจะยืนยันวันดับไฟ (หรือเลื่อนวัน)</div>`) +
+      `<label style="display:flex;flex-direction:column;gap:8px"><span class="h15">${dec ? 'วันดับไฟที่ยืนยัน' : 'วันที่ต้องการดับไฟ'} <span style="color:#B3261E">*</span></span>
+        <input type="date" data-in="form.date" value="${esc(fm.date)}" min="${todayKey()}" style="${inp}"></label>
+      <div style="display:flex;flex-direction:column;gap:8px"><span class="h15">ช่วงเวลา</span>
+        <div style="display:flex;flex-wrap:wrap;gap:8px">${OUT_TIMES.map((t, i) => chipBtn(fm.time === t, t, 'outTime', i, CHIP_TYPE)).join('')}</div>
+        <input data-in="form.time" value="${esc(fm.time)}" placeholder="หรือพิมพ์เอง เช่น 09:00–11:00" style="${inp}"></div>
+      <label style="display:flex;flex-direction:column;gap:8px"><span class="h15">${dec ? 'ข้อความถึงผู้รับจ้าง' : 'ตำแหน่ง / เหตุผลที่ต้องดับไฟ'}</span><textarea class="ta" data-in="form.note" rows="3" placeholder="${dec ? 'เช่น ดับไฟเฉพาะช่วงเสาที่ 12–14 ประสานหน้างานกับช่างก่อนเริ่ม · ถ้าไม่อนุมัติ ระบุเหตุผลที่นี่' : 'เช่น ต้นยางใหญ่คร่อมสาย 22 kV ระหว่างเสาที่ 12–14'}">${esc(fm.note)}</textarea></label>
+      ${dec && o.status === 'requested' ? `<button data-act="rejectOutage" style="height:48px;border:2px solid #7F1D1D;border-radius:12px;background:#fff;color:#7F1D1D;font-size:16px;font-weight:800">✕ ไม่อนุมัติคำขอนี้</button>` : ''}`;
   } else {
     const fm = S.form, x = S.defects.find(y => y.id === fm.id), isFix = S.sheet === 'fix', before = x.events[0].photos[0];
     title = isFix ? 'ส่งหลักฐานการแก้ไข' : 'ไม่ผ่าน · ส่งกลับแก้ใหม่'; sub = x.code + ' · ช่วงที่ ' + x.seq;
@@ -1605,7 +1717,7 @@ function vSheet() {
     <div data-scroll="sheet" style="flex:1;min-height:0;overflow:auto;padding:16px;display:grid;align-content:start;gap:18px">${body}</div>
     <div style="flex:none;padding:12px 16px 16px;border-top:1px solid #ECE6EF;display:flex;flex-direction:column;gap:8px">
       ${S.err ? `<div style="font-size:15px;font-weight:700;color:#B3261E">${esc(S.err)}</div>` : ''}
-      ${offline ? '<div style="font-size:14px;font-weight:700;color:#2B2230;background:#FFE082;border-radius:8px;padding:6px 10px;text-align:center">ออฟไลน์ — จะบันทึกไว้ในเครื่อง และส่งอัตโนมัติเมื่อมีสัญญาณ</div>' : ''}
+      ${offline ? `<div style="font-size:14px;font-weight:700;color:#2B2230;background:#FFE082;border-radius:8px;padding:6px 10px;text-align:center">${S.sheet === 'outage' ? 'ออฟไลน์ — การขอ/ยืนยันวันดับไฟต้องต่อเน็ตก่อน' : 'ออฟไลน์ — จะบันทึกไว้ในเครื่อง และส่งอัตโนมัติเมื่อมีสัญญาณ'}</div>` : ''}
       <button data-act="saveSheet" ${S.busy ? 'disabled' : ''} style="opacity:${S.busy ? .6 : 1};height:56px;border:0;border-radius:12px;background:${saveBg};color:#fff;font-size:18px;font-weight:800">${S.busy ? 'กำลังบันทึก…' : saveLabel}</button></div></div>`;
 }
 function vNotif() {
@@ -1638,6 +1750,18 @@ const vToast = () => S.toast ? `<div data-noprint style="position:absolute;z-ind
 // RENDER + EVENTS
 // ════════════════════════════════════════════════════════════════
 const shell = document.getElementById('shell');
+const NAV_KEY = 'tree_nav';   // หน้าที่เปิดอยู่ — รีเฟรชแล้วกลับมาที่เดิม (sessionStorage = ต่อแท็บ ปิดแอปแล้วหาย)
+// งานเบื้องหลัง (GPS · realtime · toast) ห้ามวาดจอใหม่ระหว่างนิ้วแตะ/เลื่อนอยู่ —
+// render() แทน innerHTML ทั้งจอ รายการที่กำลังเลื่อนจะหยุดกึก/สะดุด → รอให้นิ้วปล่อยและการเลื่อนหยุดก่อน
+let touchAt = 0, touching = false, scrollAt = 0, softT = null;
+function softRender() {
+  clearTimeout(softT);
+  if ((touching && Date.now() - touchAt < 3000) || Date.now() - scrollAt < 350) { softT = setTimeout(softRender, 200); return; }
+  render();
+}
+shell.addEventListener('touchstart', () => { touching = true; touchAt = Date.now(); }, { passive: true });
+['touchend', 'touchcancel'].forEach(t => shell.addEventListener(t, () => { touching = false; }, { passive: true }));
+shell.addEventListener('scroll', () => { scrollAt = Date.now(); }, { passive: true, capture: true });
 function render() {
   const sc = {}; shell.querySelectorAll('[data-scroll]').forEach(el => { sc[el.dataset.scroll] = el.scrollTop; });
   if (/feeder|report|fdash/.test(S.screen) && !curF()) Object.assign(S, { screen: 'dash', cur: null, sheet: null, draft: null, del: null });
@@ -1648,6 +1772,7 @@ function render() {
   const ms = shell.querySelector('[data-slot=map]'); if (ms) ms.replaceWith(mapEl);
   const mn = shell.querySelector('[data-slot=mini]'); if (mn) mn.replaceWith(miniEl);
   syncMaps();
+  if (S.me && !RO() && S.screen !== 'login') try { sessionStorage.setItem(NAV_KEY, JSON.stringify({ screen: S.screen, cur: S.cur, view: S.view, panel: S.panel, chip: S.chip })); } catch (e) {}
 }
 const ACT = {
   noop() {},
@@ -1750,7 +1875,17 @@ const ACT = {
     if (cf.office) { const name = officeName(cf.office); return admRun(async () => { await admApi.removeOffice(cf.office); if (S.adm.filter === cf.office) S.adm.filter = ''; return 'ลบ ' + name + ' แล้ว'; }); }
     admRun(async () => { const r = await admApi.remove(id); return r.deleted ? 'ลบ ' + u.username + ' แล้ว' : u.username + ' มีประวัติในระบบ — ปิดบัญชีแทนการลบ'; });
   },
-  closeSheet, saveSheet: () => ({ defect: saveDefect, fix: saveFix, reject: saveReject, work: saveWork })[S.sheet](),
+  closeSheet, saveSheet: () => ({ defect: saveDefect, fix: saveFix, reject: saveReject, work: saveWork, outage: () => saveOutage(false) })[S.sheet](),
+  // ── ขอดับไฟ ──
+  reqOutage: seq => set({ sheet: 'outage', err: null, form: { mode: 'req', seq: +seq, date: '', time: '', note: '' } }),
+  decideOutage(id) { const o = S.outages.find(x => x.id === id); set({ sheet: 'outage', err: null, form: { mode: 'decide', id, seq: o.seq, date: o.ok_date || o.want_date, time: o.ok_time || o.want_time || '', note: o.reply || '' } }); },
+  rejectOutage: () => saveOutage(true),
+  outTime: i => { S.form.time = OUT_TIMES[+i]; render(); },
+  cancelOutage(id) {
+    const o = S.outages.find(x => x.id === id);
+    if (!confirm('ยกเลิกคำขอดับไฟช่วงที่ ' + o.seq + ' วันที่ ' + fmtDay(o.want_date) + ' ?')) return;
+    run(async () => { await db.outage('del', null, id); return ['ยกเลิกคำขอดับไฟช่วงที่ ' + o.seq + ' แล้ว', 'ok']; });
+  },
   editWork(a) {
     if (LIVE && !S.online) return showToast('ไม่มีสัญญาณ — การแก้ไขรายงานต้องออนไลน์', 'off');
     const [seq, kind] = a.split(':'), w = workOf(curF().segments.find(x => x.seq === +seq), kind);
@@ -1770,7 +1905,7 @@ const ACT = {
   regps() { if (!S.user) return showToast(S.gpsErr || 'ยังไม่มีสัญญาณ GPS', 'off'); centerTo = [S.user.lat, S.user.lng]; moveDraft(S.user.lat, S.user.lng, 'gps'); },
   demoDraftPhoto: () => set({ draft: { ...S.draft, photos: [...S.draft.photos, demoPhoto()] } }),
   demoSheetPhoto: () => set({ form: { ...S.form, photos: [...S.form.photos, demoPhoto()] }, err: null }),
-  openNotif(id) { const n = S.notifs.find(x => String(x.id) === id); if (!n) return; openFeeder(n.feederId); openDefect(n.defectId); }
+  openNotif(id) { const n = S.notifs.find(x => String(x.id) === id); if (!n) return; openFeeder(n.feederId); n.seq != null ? set({ panel: { mode: 'segment', seq: n.seq }, view: 'list' }) : openDefect(n.defectId); },
 };
 const FILE = {
   impPick: impPickFiles,
