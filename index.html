@@ -1148,7 +1148,8 @@ function vDash() {
 
 function vFDash() {
   const f = curF(), st = fStats(f), n = f.segments.length || 1, cnt = k => st.st.filter(x => x === k).length;
-  const RING = ['pass', 'defect', 'cut', 'cutting', 'none'];
+  const many = f.segments.length > 40;   // แถบสถานะรายช่วง: ช่วงเยอะ → ช่องเท่ากัน
+  const RING =['pass', 'defect', 'cut', 'cutting', 'none'];
   let deg = 0; const ring = RING.map(k => { const a = deg; deg += cnt(k) / n * 360; return SEG_BAR(k) + ' ' + a.toFixed(1) + 'deg ' + deg.toFixed(1) + 'deg'; }).join(',');
   const kmPass = f.segments.reduce((a, x, i) => a + (st.st[i] === 'pass' ? x.length_km : 0), 0), by = k => st.ds.filter(d => d.status === k).length;
   const acts = [];
@@ -1174,8 +1175,10 @@ function vFDash() {
           ${RING.map(k => [SEG_BAR(k), SEG[k].label, cnt(k)]).map(([c, l, v]) => `<div style="display:flex;align-items:center;gap:8px;font-size:15px"><span style="flex:none;width:14px;height:14px;border-radius:3px;background:${c}"></span><span style="flex:1">${l}</span><b>${v} ช่วง</b></div>`).join('')}</div></div>
       <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px">${tile(kmPass.toFixed(2) + '/' + st.km.toFixed(2), 'ระยะทางที่ผ่าน (กม.)', '#1B5E20')}${tile(st.cutN + '/' + f.segments.length, 'ผู้รับจ้างแจ้งตัดเสร็จ (ช่วง)', '#00636B')}${tile(st.trees, 'จำนวนต้นตามแผน')}${tile(st.out, 'จุดค้างแก้ไข', st.out ? '#C62828' : '#5E5566')}${tile(st.rev, 'รอตรวจซ้ำ', st.rev ? '#B85C00' : '#5E5566')}</div>
     </div>
-    <div class="card"><div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:baseline"><div style="font-size:17px;font-weight:800">สถานะรายช่วงตามแนวสาย</div><div style="font-size:14px;color:#5E5566">ความกว้างตามความยาวช่วง · แตะเพื่อเปิดบนแผนที่</div></div>
-      <div style="display:flex;gap:3px;min-height:64px">${f.segments.map((x, i) => { const k = st.st[i], c = SEG[k]; return `<button data-act="segOnMap" data-arg="${x.seq}" title="ช่วงที่ ${x.seq} · ${x.length_km.toFixed(2)} กม. · ${c.label}" style="flex:${x.length_km.toFixed(3)} 1 0;min-width:30px;border:0;border-radius:6px;background:${k === 'none' ? '#EEEAF0' : c.solid};color:${k === 'none' ? '#3F3846' : '#fff'};display:flex;flex-direction:column;align-items:center;justify-content:center;padding:6px 2px;background-image:${k === 'none' ? 'repeating-linear-gradient(135deg,transparent 0 6px,rgba(0,0,0,.06) 6px 12px)' : 'none'}"><span style="font-size:16px;font-weight:800;line-height:1.1">${x.seq}</span><span style="font-size:12px;font-weight:700">${c.glyph}</span></button>`; }).join('')}</div>
+    <div class="card"><div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:baseline"><div style="font-size:17px;font-weight:800">สถานะรายช่วงตามแนวสาย</div><div style="font-size:14px;color:#5E5566">${many ? 'เรียงจากต้นสาย ซ้าย→ขวา บน→ล่าง' : 'ความกว้างตามความยาวช่วง'} · แตะเพื่อเปิดบนแผนที่</div></div>
+      <!-- เดิมแถวเดียว ช่องละ ≥30px → ช่วงเยอะ (เช่น 143) ล้นการ์ดออกไปทางขวา
+           ≤40 ช่วง: กว้างตามความยาวช่วง ขึ้นแถวใหม่เมื่อจอแคบ · >40 ช่วง: ช่องเท่ากันเรียงตามแนวสาย (ตามสัดส่วนจะเล็กจนอ่านไม่ออก) -->
+      <div style="${many ? 'display:grid;grid-template-columns:repeat(auto-fill,minmax(36px,1fr))' : 'display:flex;flex-wrap:wrap'};gap:3px">${f.segments.map((x, i) => { const k = st.st[i], c = SEG[k]; return `<button data-act="segOnMap" data-arg="${x.seq}" title="ช่วงที่ ${x.seq} · ${x.length_km.toFixed(2)} กม. · ${c.label}" style="${many ? 'min-height:48px' : `flex:${x.length_km.toFixed(3)} 1 0;min-width:30px;min-height:64px`};border:0;border-radius:6px;background:${k === 'none' ? '#EEEAF0' : c.solid};color:${k === 'none' ? '#3F3846' : '#fff'};display:flex;flex-direction:column;align-items:center;justify-content:center;padding:6px 2px;background-image:${k === 'none' ? 'repeating-linear-gradient(135deg,transparent 0 6px,rgba(0,0,0,.06) 6px 12px)' : 'none'}"><span style="font-size:16px;font-weight:800;line-height:1.1">${x.seq}</span><span style="font-size:12px;font-weight:700">${c.glyph}</span></button>`; }).join('')}</div>
       <div style="display:flex;justify-content:space-between;font-size:13px;color:#5E5566"><span>ต้นสาย</span><span>รวม ${st.km.toFixed(2)} กม. · ${f.segments.length} ช่วง</span></div></div>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr));gap:14px;align-items:start">
       <div class="card"><div style="font-size:17px;font-weight:800">จุดบกพร่องตามสถานะ <span class="sub">· ${st.ds.length} จุด</span></div>
