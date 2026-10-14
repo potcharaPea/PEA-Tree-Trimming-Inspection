@@ -371,7 +371,7 @@ const db = {
     const t = sb.from('outage_requests');
     if (op === 'add') return void await q(t.insert(p.row), 'outage');
     const r = await q((op === 'del' ? t.delete() : t.update(p.row)).eq('id', id).select('id'), 'outage');
-    if (!r.length) throw new Error(op === 'del' ? 'ยกเลิกไม่ได้ — ผู้ตรวจอาจยืนยันวันไปแล้ว' : 'ไม่มีสิทธิ์แก้คำขอนี้');
+    if (!r.length) throw new Error(op === 'del' ? 'ยกเลิกไม่ได้ — ไม่มีสิทธิ์ หรือคำขอถูกยกเลิกไปแล้ว' : 'ไม่มีสิทธิ์แก้คำขอนี้');
   },
   unsubscribe() { if (db.channel) { sb.removeChannel(db.channel); db.channel = null; } }
 };
