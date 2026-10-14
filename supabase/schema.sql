@@ -102,7 +102,7 @@ create table if not exists segment_works (
   id         uuid primary key default gen_random_uuid(),   -- id มาจากเครื่อง (ส่งซ้ำตอน sync ได้)
   segment_id uuid not null references segments on delete cascade,
   feeder_id  uuid not null references feeders on delete cascade,
-  kind       text not null check (kind in ('started', 'finished')),
+  kind       text not null check (kind in ('started', 'progress', 'finished')),   -- progress = รูปหลังตัดรายจุด ส่งระหว่างตัด (photos[0].tag)
   note       text,
   photos     jsonb not null default '[]',   -- [{"path":"MDA03R-04/<segment>/<work>_1.jpg","label":"IMG_1.jpg","lat":16.5,"lng":104.6}]
   actor_id   uuid references profiles default auth.uid(),
@@ -110,6 +110,8 @@ create table if not exists segment_works (
   updated_at timestamptz                      -- ผู้รับจ้างแก้ไขรายงานล่าสุดเมื่อ (null = ไม่เคยแก้)
 );
 alter table segment_works add column if not exists updated_at timestamptz;   -- สำหรับฐานข้อมูลที่สร้างก่อนมีคอลัมน์นี้
+alter table segment_works drop constraint if exists segment_works_kind_check;   -- ฐานข้อมูลเดิม: เพิ่ม kind 'progress'
+alter table segment_works add constraint segment_works_kind_check check (kind in ('started', 'progress', 'finished'));
 
 -- ── ขอดับไฟเพื่อตัดต้นไม้ (รายช่วง): ผู้รับจ้างขอ + เสนอวัน → ผู้ตรวจยืนยันวันดับไฟ หรือปฏิเสธ ──
 create table if not exists outage_requests (
@@ -242,6 +244,9 @@ drop policy if exists works_con_delete on segment_works;
 create policy works_con_update on segment_works for update to authenticated
   using (actor_id = auth.uid() and can_see_feeder(feeder_id)) with check (actor_id = auth.uid() and can_see_feeder(feeder_id));
 create policy works_con_delete on segment_works for delete to authenticated using (actor_id = auth.uid() and can_see_feeder(feeder_id));
+-- ผู้ตรวจ: ย้อนขั้นตอนงานตัดของผู้รับจ้างได้ (ลบรายงาน/รูป) ใน feeder ของการไฟฟ้าตน
+drop policy if exists works_insp_delete on segment_works;
+create policy works_insp_delete on segment_works for delete to authenticated using (can_edit_feeder(feeder_id));
 
 alter table outage_requests enable row level security;
 drop policy if exists outage_read on outage_requests;
