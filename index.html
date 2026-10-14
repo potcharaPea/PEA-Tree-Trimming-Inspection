@@ -904,6 +904,13 @@ function wconfInfo() {
     return { ...undoBox('ย้อนผล · ' + d.code, u.what, u.back), go: async () => { const gone = d.events.length === 1; await db.undoEvent(d);
       if (gone) S.panel = { mode: 'segment', seq: d.seq }; return 'ย้อน ' + d.code + ': ยกเลิก "' + u.what + '" แล้ว'; } };
   }
+  if (c.mode === 'outDel') {
+    const o = S.outages.find(x => x.id === c.id); if (!o) return null;
+    const when = o.status === 'confirmed' ? 'นัดดับไฟ ' + fmtDay(o.ok_date) + (o.ok_time ? ' · ' + esc(o.ok_time) : '') : 'วันที่ขอ ' + fmtDay(o.want_date);
+    return { red: true, title: 'ยกเลิกคำขอดับไฟ · ช่วงที่ ' + o.seq, sum: `• คำขอดับไฟ (${when}) จะถูกลบ${o.status === 'confirmed' ? '<br>• <b>นัดดับไฟแล้ว</b> — ระบบจะแจ้งเตือนอีกฝ่ายว่ายกเลิก' : ''}`,
+      q: 'ยืนยันยกเลิกคำขอดับไฟนี้จริงหรือไม่? กู้คืนไม่ได้', ok: 'ยืนยันยกเลิก',
+      go: async () => { await db.outage('del', null, o.id); return 'ยกเลิกคำขอดับไฟช่วงที่ ' + o.seq + ' แล้ว'; } };
+  }
   const s = f.segments.find(x => x.seq === c.seq), t = 'ช่วงที่ ' + s.seq;
   if (c.mode === 'edit') {
     const w = workOf(s, c.kind), fm = S.form; if (!w) return null;
@@ -1474,7 +1481,7 @@ function outageBlock(f, x) {
       ${o.note ? `<div style="font-size:15px;background:#F6F3F8;padding:8px 12px;border-radius:8px;overflow-wrap:anywhere">${esc(o.note)}</div>` : ''}
       ${o.reply ? `<div style="font-size:14px;color:${fg};overflow-wrap:anywhere"><b>ผู้ตรวจ:</b> ${esc(o.reply)}</div>` : ''}
       <div style="font-size:13px;color:#5E5566">${esc(o.who || '')} · ขอเมื่อ ${fmtAt(o.created_at)}${o.decided_at ? ' · ตอบเมื่อ ' + fmtAt(o.decided_at) : ''}</div>
-      ${live && (insp ? o.status !== 'rejected' : mine && o.status === 'requested') ? `<div style="display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">${insp ? btn('decideOutage', o.status === 'confirmed' ? 'เลื่อนวัน / แก้ไข' : 'ยืนยันวันดับไฟ') : btn('cancelOutage', 'ยกเลิกคำขอ', true)}</div>` : ''}</div>`;
+      ${live && (insp || (mine && o.status !== 'rejected')) ? `<div style="display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">${insp && o.status !== 'rejected' ? btn('decideOutage', o.status === 'confirmed' ? 'เลื่อนวัน / แก้ไข' : 'ยืนยันวันดับไฟ') : ''}${btn('cancelOutage', 'ยกเลิกคำขอ', true)}</div>` : ''}</div>`;
   };
   return `<div style="display:flex;flex-direction:column;gap:8px"><div style="font-size:16px;font-weight:800">การดับไฟ <span class="sub">· สำหรับจุดที่ต้องดับไฟตัด</span></div>
     ${list.slice().reverse().map(card).join('')}
@@ -1995,11 +2002,7 @@ const ACT = {
   decideOutage(id) { const o = S.outages.find(x => x.id === id); set({ sheet: 'outage', err: null, form: { mode: 'decide', id, seq: o.seq, date: o.ok_date || o.want_date, time: o.ok_time || o.want_time || '', note: o.reply || '' } }); },
   rejectOutage: () => saveOutage(true),
   outTime: i => { S.form.time = OUT_TIMES[+i]; render(); },
-  cancelOutage(id) {
-    const o = S.outages.find(x => x.id === id);
-    if (!confirm('ยกเลิกคำขอดับไฟช่วงที่ ' + o.seq + ' วันที่ ' + fmtDay(o.want_date) + ' ?')) return;
-    run(async () => { await db.outage('del', null, id); return ['ยกเลิกคำขอดับไฟช่วงที่ ' + o.seq + ' แล้ว', 'ok']; });
-  },
+  cancelOutage: id => needOnline() || set({ wconf: { mode: 'outDel', id, step: 1 } }),
   editWork(a) {
     if (LIVE && !S.online) return showToast('ไม่มีสัญญาณ — การแก้ไขรายงานต้องออนไลน์', 'off');
     const [seq, kind] = a.split(':'), w = workOf(curF().segments.find(x => x.seq === +seq), kind);

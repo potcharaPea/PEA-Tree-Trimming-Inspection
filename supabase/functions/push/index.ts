@@ -1,5 +1,5 @@
 // Edge Function: ส่งแจ้งเตือนบนมือถือ (Web Push) — เรียกจาก trigger push_notify() ใน schema.sql เท่านั้น
-// body: { table, type: INSERT|UPDATE, record } · ยืนยันผู้เรียกด้วย header x-push-secret = secret PUSH_SECRET
+// body: { table, type: INSERT|UPDATE|DELETE, by, record } · ยืนยันผู้เรียกด้วย header x-push-secret = secret PUSH_SECRET
 // deploy ผ่าน Dashboard ได้ slug สุ่ม: URL จริง = functions/v1/super-responder (ชื่อแสดง "push") — deploy ใหม่ต้องแก้ URL ใน push_notify() ด้วย
 // secrets ที่ต้องตั้ง: VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, PUSH_SECRET · deploy แบบ --no-verify-jwt
 // ผู้รับ: งานของผู้รับจ้าง → ผู้ตรวจของการไฟฟ้านั้น · งานของผู้ตรวจ → ผู้รับจ้างของ Feeder · ไม่ส่งให้คนที่ทำเอง
@@ -18,7 +18,7 @@ const day = (d: string) => { const [y, m, dd] = (d || '').split('-').map(Number)
 const pad4 = (n: number) => 'D-' + String(n).padStart(4, '0');
 
 // รายการใหม่ → { to: ผู้รับ, actor: คนทำ, title, body, nav: hash ที่แอปใช้เปิดหน้า } หรือ null = ไม่แจ้ง
-async function build(table: string, type: string, r: Row) {
+async function build(table: string, type: string, r: Row, by: string) {
   // defect_events ไม่มี feeder_id/segment_id → หาผ่าน defects
   const d = table === 'defect_events' ? await one('defects', 'id,code_no,issue_type,segment_id,feeder_id', r.defect_id) : null;
   const f = await one('feeders', 'id,code,office_id', d ? d.feeder_id : r.feeder_id);
@@ -40,6 +40,8 @@ async function build(table: string, type: string, r: Row) {
   if (table === 'segments')
     return { to: await contractors(f.id), actor: r.passed_by, nav: segNav, title: `ช่วงที่ ${seq} ผ่านทั้งช่วง`, body: f.code };
   if (table === 'outage_requests') {
+    if (type === 'DELETE') return { to: [...await inspectors(f.office_id), r.actor_id], actor: by, nav: segNav,
+      title: 'ยกเลิกนัดดับไฟ', body: `${at} · เดิมนัด ${day(r.ok_date)}${r.ok_time ? ' ' + r.ok_time : ''}` };
     if (type === 'INSERT') return { to: await inspectors(f.office_id), actor: r.actor_id, nav: segNav,
       title: 'ผู้รับจ้างขอดับไฟ', body: `${at} · วันที่ ${day(r.want_date)}${r.want_time ? ' ' + r.want_time : ''}` };
     if (r.status === 'confirmed') return { to: [r.actor_id], actor: r.decided_by, nav: segNav,
@@ -53,8 +55,8 @@ async function build(table: string, type: string, r: Row) {
 Deno.serve(async req => {
   if (req.headers.get('x-push-secret') !== Deno.env.get('PUSH_SECRET')) return new Response('forbidden', { status: 403 });
   try {
-    const { table, type, record } = await req.json();
-    const m = await build(table, type, record);
+    const { table, type, record, by } = await req.json();   // by = ผู้ทำ (auth.uid() ใน trigger) · ใช้กับ DELETE ที่ไม่มีคอลัมน์บอกคนลบ
+    const m = await build(table, type, record, by);
     const to = m ? m.to.filter((id: string) => id && id !== m.actor) : [];
     if (!m || !to.length) return new Response('skip');
     const { data: subs } = await db.from('push_subs').select('*').in('user_id', to);

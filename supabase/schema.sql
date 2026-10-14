@@ -254,15 +254,17 @@ drop policy if exists outage_con_insert on outage_requests;
 drop policy if exists outage_con_delete on outage_requests;
 drop policy if exists outage_insp on outage_requests;
 create policy outage_read on outage_requests for select to authenticated using (can_see_feeder(feeder_id));
--- ผู้รับจ้าง: ขอได้เฉพาะช่วงของ feeder ที่ตนรับงาน · ยกเลิก (ลบ) ได้เฉพาะคำขอของตนที่ยังรอยืนยัน
+-- ผู้รับจ้าง: ขอได้เฉพาะช่วงของ feeder ที่ตนรับงาน · ยกเลิก (ลบ) ได้เฉพาะคำขอของตนที่รอยืนยัน/นัดแล้ว
 create policy outage_con_insert on outage_requests for insert to authenticated
   with check (actor_id = auth.uid() and not is_inspector() and status = 'requested' and can_see_feeder(feeder_id)
     and exists (select 1 from segments s where s.id = segment_id and s.feeder_id = outage_requests.feeder_id));
 create policy outage_con_delete on outage_requests for delete to authenticated
-  using (actor_id = auth.uid() and status = 'requested' and can_see_feeder(feeder_id));
--- ผู้ตรวจ: ยืนยันวัน / ปฏิเสธ
+  using (actor_id = auth.uid() and status in ('requested', 'confirmed') and can_see_feeder(feeder_id));
+-- ผู้ตรวจ: ยืนยันวัน / ปฏิเสธ / ยกเลิก (ลบ) ได้ทุกคำขอ
 create policy outage_insp on outage_requests for update to authenticated
   using (can_edit_feeder(feeder_id)) with check (can_edit_feeder(feeder_id));
+drop policy if exists outage_insp_delete on outage_requests;
+create policy outage_insp_delete on outage_requests for delete to authenticated using (can_edit_feeder(feeder_id));
 
 -- ── ภาพรวมทุกการไฟฟ้า (หน้า login, ไม่ต้องล็อกอิน, ดูอย่างเดียว) ──
 -- คืนเฉพาะตัวเลขสรุป + สถานะรายช่วง: ไม่มีรูป พิกัด ชื่อผู้ใช้ หรือหมายเหตุ
@@ -383,7 +385,7 @@ begin
   select value into s from app_secrets where key = 'push_secret';
   if s is not null then
     perform net.http_post('https://nwowvwadxdsidazolljk.supabase.co/functions/v1/super-responder',
-      jsonb_build_object('table', tg_table_name, 'type', tg_op, 'record', to_jsonb(new)),
+      jsonb_build_object('table', tg_table_name, 'type', tg_op, 'by', auth.uid(), 'record', case when tg_op = 'DELETE' then to_jsonb(old) else to_jsonb(new) end),
       '{}'::jsonb, jsonb_build_object('Content-Type', 'application/json', 'x-push-secret', s));
   end if;
   return null;
@@ -399,6 +401,9 @@ drop trigger if exists push_outage_new on outage_requests;
 create trigger push_outage_new after insert on outage_requests for each row execute function push_notify();
 drop trigger if exists push_outage_decide on outage_requests;
 create trigger push_outage_decide after update of status on outage_requests for each row when (old.status is distinct from new.status) execute function push_notify();
+-- ยกเลิกคำขอที่นัดดับไฟแล้ว → แจ้งอีกฝ่าย (ยกเลิกตอนรอยืนยัน/ไม่อนุมัติ ไม่แจ้ง)
+drop trigger if exists push_outage_cancel on outage_requests;
+create trigger push_outage_cancel after delete on outage_requests for each row when (old.status = 'confirmed') execute function push_notify();
 
 -- ════════════════════════════════════════════════════════════════
 -- สร้างผู้ใช้ (ทำโดยผู้ดูแล — ผู้ใช้ไม่ต้องมีอีเมลจริง)
