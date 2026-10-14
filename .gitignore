@@ -1,3 +1,6 @@
 sample-data/
 ตัวอย่าง index/
 MDA03R-04 ไลน์เหล่าสร้างถ่อ/
+bug/
+supabase/.push-keys.txt
+supabase/.push-secret.sql

@@ -347,6 +347,60 @@ do $$ begin
 exception when duplicate_object then null; end $$;
 
 -- ════════════════════════════════════════════════════════════════
+-- แจ้งเตือนบนมือถือ (Web Push) — trigger ส่งรายการใหม่ไป Edge Function "push" (ผ่าน pg_net) แล้วฟังก์ชันหาผู้รับเอง
+--   ตั้งค่าครั้งเดียว: insert into app_secrets values ('push_secret', '<PUSH_SECRET เดียวกับ secret ของ Edge Function>');
+--   ยังไม่ตั้ง push_secret = ไม่ส่ง (แอปทำงานปกติ)
+-- ════════════════════════════════════════════════════════════════
+create extension if not exists pg_net;
+create table if not exists app_secrets (key text primary key, value text not null);
+alter table app_secrets enable row level security;   -- ไม่มี policy = แอปอ่านไม่ได้ (trigger อ่านผ่าน security definer)
+
+-- เครื่องที่เปิดแจ้งเตือน: 1 endpoint = 1 เครื่อง/เบราว์เซอร์ ผูกกับบัญชีที่ล็อกอินล่าสุด
+create table if not exists push_subs (
+  endpoint   text primary key,
+  user_id    uuid not null references profiles on delete cascade,
+  p256dh     text not null,
+  auth       text not null,
+  created_at timestamptz not null default now()
+);
+alter table push_subs enable row level security;   -- ไม่มี policy: เขียนผ่าน RPC ด้านล่างเท่านั้น
+create or replace function save_push_sub(p_endpoint text, p_p256dh text, p_auth text) returns void
+language sql security definer set search_path = public as $$
+  insert into push_subs (endpoint, user_id, p256dh, auth) values (p_endpoint, auth.uid(), p_p256dh, p_auth)
+  on conflict (endpoint) do update set user_id = auth.uid(), p256dh = excluded.p256dh, auth = excluded.auth, created_at = now()
+$$;
+create or replace function drop_push_sub(p_endpoint text) returns void
+language sql security definer set search_path = public as $$ delete from push_subs where endpoint = p_endpoint and user_id = auth.uid() $$;
+revoke all on function save_push_sub(text, text, text) from public, anon;
+revoke all on function drop_push_sub(text) from public, anon;
+grant execute on function save_push_sub(text, text, text) to authenticated;
+grant execute on function drop_push_sub(text) to authenticated;
+
+create or replace function push_notify() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare s text;
+begin
+  select value into s from app_secrets where key = 'push_secret';
+  if s is not null then
+    perform net.http_post('https://nwowvwadxdsidazolljk.supabase.co/functions/v1/push',
+      jsonb_build_object('table', tg_table_name, 'type', tg_op, 'record', to_jsonb(new)),
+      '{}'::jsonb, jsonb_build_object('Content-Type', 'application/json', 'x-push-secret', s));
+  end if;
+  return null;
+end $$;
+-- รูปหลังตัดรายจุด (progress) ไม่แจ้ง — แจ้งทีเดียวตอนแจ้งตัดเสร็จ
+drop trigger if exists push_works on segment_works;
+create trigger push_works after insert on segment_works for each row when (new.kind <> 'progress') execute function push_notify();
+drop trigger if exists push_events on defect_events;
+create trigger push_events after insert on defect_events for each row execute function push_notify();
+drop trigger if exists push_seg_pass on segments;
+create trigger push_seg_pass after update of passed_at on segments for each row when (old.passed_at is null and new.passed_at is not null) execute function push_notify();
+drop trigger if exists push_outage_new on outage_requests;
+create trigger push_outage_new after insert on outage_requests for each row execute function push_notify();
+drop trigger if exists push_outage_decide on outage_requests;
+create trigger push_outage_decide after update of status on outage_requests for each row when (old.status is distinct from new.status) execute function push_notify();
+
+-- ════════════════════════════════════════════════════════════════
 -- สร้างผู้ใช้ (ทำโดยผู้ดูแล — ผู้ใช้ไม่ต้องมีอีเมลจริง)
 -- 1) Dashboard → Authentication → Users → Add user → Create new user
 --      Email:    {ชื่อผู้ใช้}@{รหัสการไฟฟ้า}.local   เช่น somchai.j@kce.local

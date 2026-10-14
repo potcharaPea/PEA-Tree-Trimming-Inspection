@@ -1,6 +1,6 @@
 // Service Worker — เปิดแอปได้ตอนไม่มีเน็ต
 // แก้ index.html แล้วอยากให้เครื่องผู้ใช้ได้ไฟล์ใหม่ทันที → เปลี่ยนเลขเวอร์ชันนี้
-const CACHE = 'tree-v11';
+const CACHE = 'tree-v12';
 const APP = ['./', './index.html', './manifest.webmanifest',
   './icons/icon-192.png', './icons/icon-512.png', './icons/icon-maskable-512.png', './icons/apple-touch-icon.png',
   'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css',
@@ -38,4 +38,19 @@ self.addEventListener('fetch', e => {
   if (/unpkg\.com|cdnjs\.cloudflare\.com|cdn\.jsdelivr\.net|fonts\.(googleapis|gstatic)\.com|tile\.openstreetmap\.org|arcgisonline\.com/.test(url.hostname)) {
     e.respondWith(caches.match(req).then(hit => hit || fetch(req).then(r => put(req, r))));
   }
+});
+
+// แจ้งเตือนบนมือถือ (จาก Edge Function "push"): { title, body, nav } · nav = "f=<feeder>&s=<ช่วง>" หรือ "f=<feeder>&d=<จุด>"
+self.addEventListener('push', e => {
+  const m = e.data ? e.data.json() : {};
+  e.waitUntil(self.registration.showNotification(m.title || 'PEA Tree Trimming Inspection', { body: m.body || '', icon: './icons/icon-192.png', data: { nav: m.nav || '' } }));
+});
+// แตะแจ้งเตือน → แอปเปิดอยู่: ส่ง nav ให้แอปเปิดหน้านั้น · ไม่เปิด: เปิดแอปพร้อม #nav
+self.addEventListener('notificationclick', e => {
+  e.notification.close();
+  const nav = e.notification.data.nav;
+  e.waitUntil(clients.matchAll({ type: 'window', includeUncontrolled: true }).then(cs => {
+    if (cs[0]) { cs[0].postMessage({ nav }); return cs[0].focus(); }
+    return clients.openWindow(new URL('./' + (nav ? '#' + nav : ''), self.registration.scope).href);
+  }));
 });

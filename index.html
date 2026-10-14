@@ -95,6 +95,7 @@ button,[data-act],a,label{touch-action:manipulation;-webkit-tap-highlight-color:
 // Supabase — ใช้เฉพาะ publishable/anon key (ห้ามใส่ service_role) · เว้นว่าง = โหมดสาธิต (mock ใน memory)
 const SUPABASE_URL = 'https://nwowvwadxdsidazolljk.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_2wpHTWLsPuswlj_mSnmfFQ_FZ89xplf';
+const VAPID_PUBLIC = 'BKlu2Zy-JKvwWtm1W19Z4YCV6CMv5ccO_A_0zctVbr3BzMOzaAxI4gT3_GtchhWKGQPUTTZA9T6ejRAJtFpVqfc';   // คู่กับ VAPID_PRIVATE_KEY ใน secret ของ Edge Function "push"
 const LIVE = !!(SUPABASE_URL && SUPABASE_KEY) && !/[?&]demo\b/.test(location.search);   // ?demo = บังคับโหมดสาธิต
 // retry: false + timeout → สัญญาณหลอก (มีขีดแต่ใช้ไม่ได้) จะตกไปคิวออฟไลน์เร็ว แทนที่จะค้างรอ retry
 const sb = LIVE ? supabase.createClient(SUPABASE_URL, SUPABASE_KEY, { db: { retry: false },
@@ -664,17 +665,47 @@ async function enter(u) {
     ? { screen: nav.screen, cur: nav.cur, view: nav.view || 'map', panel: nav.panel || { mode: 'list' }, chip: nav.chip || 'all' } : { screen: 'dash', cur: null };
   set({ busy: false, loginErr: null, password: LIVE ? '' : S.password, ...back, sheet: null, draft: null, showNotif: false });
   clearTimeout(rtT);
-  if (LIVE) { db.subscribe(onRemoteEvent); startGps(); flush(); }
+  if (LIVE) { db.subscribe(onRemoteEvent); startGps(); flush(); push.sub(false).then(ok => set({ pushOn: ok })).catch(e => console.warn('push', e)); }
+  if (location.hash.length > 1) { const h = location.hash.slice(1); history.replaceState(null, '', location.pathname + location.search); goNav(h); }   // เปิดจากแจ้งเตือน
   // ponytail: โหมดสาธิตจำลอง realtime ที่ 12 วิ
   else if (u.role === 'inspector' && !rtDone) rtT = setTimeout(simRealtime, 12000);
 }
 async function logout() {
   // ออกจากระบบตอนยังมีของรอส่ง = ข้อมูลหาย → ไม่ให้ออก
   if (LIVE && S.queue) return showToast('ยังมีข้อมูลรอส่ง ' + S.queue + ' รายการ — ต่อเน็ตให้ส่งครบก่อนออกจากระบบ', 'err', 6000);
-  clearTimeout(rtT); db.unsubscribe(); await db.signOut(); if (LIVE) await snap.clear();
+  clearTimeout(rtT); db.unsubscribe(); await push.drop().catch(() => {}); S.pushOn = false; await db.signOut(); if (LIVE) await snap.clear();
   if (RO()) Object.assign(S, S.pubBak, { pubView: false, pubBak: null });
   try { sessionStorage.removeItem(NAV_KEY); } catch (e) {}
   set({ me: null, screen: 'login', showNotif: false, sheet: null, draft: null, ...(LIVE ? { feeders: [], defects: [], notifs: [], unread: 0, outages: [] } : {}) });
+}
+// ── แจ้งเตือนบนมือถือ (Web Push): ผูกเครื่องนี้กับบัญชีที่ล็อกอิน · Edge Function "push" ส่งเมื่อมีรายการใหม่ ──
+//   iPhone ต้องเปิดจากไอคอนบนหน้าจอโฮม (iOS 16.4+) ถึงจะมี PushManager
+const pushOk = () => LIVE && 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+const b64u = s => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
+const push = {
+  async sub(ask) {   // ask = กดปุ่มเปิดเอง (ขอสิทธิ์) · ไม่ ask = ตอนเข้าแอป ลงทะเบียนซ้ำเงียบๆ ถ้าเคยอนุญาตแล้ว
+    if (!pushOk() || (!ask && Notification.permission !== 'granted')) return false;
+    if (ask && await Notification.requestPermission() !== 'granted') return false;
+    const reg = await navigator.serviceWorker.ready;
+    const j = ((await reg.pushManager.getSubscription()) || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64u(VAPID_PUBLIC) })).toJSON();
+    const { error } = await sb.rpc('save_push_sub', { p_endpoint: j.endpoint, p_p256dh: j.keys.p256dh, p_auth: j.keys.auth });
+    if (error) throw error;
+    return true;
+  },
+  async drop() {   // ออกจากระบบ: เครื่องนี้เลิกรับแจ้งเตือนของบัญชีนี้
+    if (!pushOk()) return;
+    const reg = await navigator.serviceWorker.getRegistration(), s = reg && await reg.pushManager.getSubscription();
+    if (s) await sb.rpc('drop_push_sub', { p_endpoint: s.endpoint });
+  }
+};
+// เปิดหน้าจากแจ้งเตือน: "f=<feeder>&s=<ช่วง>" หรือ "f=<feeder>&d=<จุดบกพร่อง>"
+async function goNav(h) {
+  const p = new URLSearchParams(h), fid = p.get('f');
+  if (!S.me || !fid) return;
+  await refresh();
+  if (!S.feeders.some(f => f.id === fid)) return;
+  openFeeder(fid);
+  if (p.get('d')) openDefect(p.get('d')); else if (p.get('s')) selectSeg(+p.get('s'));
 }
 // ── GPS (LIVE) — ponytail: โหมดสาธิตใช้ตำแหน่งจำลองคงที่ ──
 let gpsId = null;
@@ -1169,6 +1200,16 @@ function vLogin() {
   </div>`;
 }
 
+// การ์ดชวนเปิดแจ้งเตือนบนมือถือ (หายไปเมื่อเปิดแล้ว)
+function vPushCard() {
+  if (!LIVE || S.pushOn) return '';
+  const card = (inner, bg, fg) => `<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:14px 16px;border-radius:14px;background:${bg};color:${fg}">
+    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>${inner}</div>`;
+  if (!pushOk()) return card('<div style="flex:1;min-width:200px;font-size:14px;font-weight:600">เครื่องนี้ยังรับแจ้งเตือนไม่ได้ — iPhone ต้องเปิดแอปจากไอคอนบนหน้าจอโฮม (iOS 16.4 ขึ้นไป)</div>', '#F6F3F8', '#4A3F52');
+  if (Notification.permission === 'denied') return card('<div style="flex:1;min-width:200px;font-size:14px;font-weight:600">ปิดการแจ้งเตือนของแอปนี้ไว้ — เปิดได้ที่ การตั้งค่าเครื่อง › การแจ้งเตือน</div>', '#FFEFD6', '#7A3B00');
+  return card(`<div style="flex:1;min-width:200px"><div style="font-size:16px;font-weight:800">เปิดแจ้งเตือนบนมือถือเครื่องนี้</div><div style="font-size:14px">${isInsp() ? 'รู้ทันทีเมื่อผู้รับจ้างเริ่มตัด แจ้งตัดเสร็จ ส่งหลักฐานแก้ไข หรือขอดับไฟ' : 'รู้ทันทีเมื่อผู้ตรวจพบจุดบกพร่อง แจ้งผ่าน/ไม่ผ่าน หรือยืนยันวันดับไฟ'} แม้ไม่ได้เปิดแอป</div></div>
+    <button data-act="pushOn" ${S.busy ? 'disabled' : ''} class="bp" style="flex:none;padding:0 20px">เปิดแจ้งเตือน</button>`, '#F1E7F6', '#3E0F55');
+}
 function vDash() {
   const insp = isInsp(), fs = myFeeders(), all = fs.map(x => [x, fStats(x)]), sum = k => all.reduce((a, [, st]) => a + st[k], 0);
   const tiles = insp ? [[fs.length, 'Feeder', P], [sum('km').toFixed(1), 'ระยะทางรวม (กม.)'], [sum('out'), 'จุดบกพร่องค้าง', '#C62828'], [sum('rev'), 'รอตรวจซ้ำ', '#B85C00']]
@@ -1192,6 +1233,7 @@ function vDash() {
       <div><div style="font-size:15px;color:#5E5566">${insp ? 'ผู้ตรวจงาน' : 'ผู้รับจ้าง'}</div><div style="font-size:26px;font-weight:800;line-height:1.25">${insp ? 'ภาพรวมงานตรวจรับ' : 'งานตัดและงานแก้ไข'}</div></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap"><button data-act="goOverview" class="bo" style="padding:0 18px">ภาพรวมทุกการไฟฟ้า</button>
       ${insp && S.wide ? `<button data-act="goImport" class="bp" style="padding:0 20px;display:flex;align-items:center;gap:8px"><span style="font-size:22px;line-height:1">+</span>นำเข้า Feeder</button>` : ''}</div></div>
+    ${vPushCard()}
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px">${tiles.map(t => tile(t[0], t[1], t[2], true)).join('')}</div>
     <div style="font-size:19px;font-weight:700;margin-top:4px">${insp ? 'Feeder ทั้งหมด' : 'Feeder ที่ได้รับมอบหมาย'}</div>
     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,340px),1fr));gap:14px">${cards || '<div style="color:#5E5566">ยังไม่มี Feeder</div>'}</div>
@@ -1963,6 +2005,10 @@ const ACT = {
     const [seq, kind] = a.split(':'), w = workOf(curF().segments.find(x => x.seq === +seq), kind);
     set({ sheet: 'work', err: null, form: { seq: +seq, kind, note: w.note, photos: [...w.photos], editId: w.id } });
   },
+  async pushOn() {
+    try { const ok = await push.sub(true); set({ pushOn: ok }); showToast(ok ? 'เปิดแจ้งเตือนในเครื่องนี้แล้ว' : 'ไม่ได้รับอนุญาตให้แจ้งเตือน', ok ? 'ok' : 'err', 5000); }
+    catch (e) { showToast('เปิดแจ้งเตือนไม่สำเร็จ: ' + e.message, 'err', 6000); }
+  },
   undoSeg: seq => needOnline() || set({ wconf: { mode: 'undo', seq: +seq, step: 1 } }),
   undoDef: id => needOnline() || set({ wconf: { mode: 'undoDef', id, step: 1 } }),
   delSlotPh: a => { if (needOnline()) return; const [seq, wid] = a.split(':'); set({ wconf: { mode: 'delPh', seq: +seq, wid, step: 1 } }); },
@@ -2031,7 +2077,10 @@ if (LIVE) {
   setInterval(flush, 30000);
 }
 // Service Worker: เปิดแอปได้ตอนไม่มีเน็ต (ต้องเป็น https/localhost)
-if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(e => console.warn('sw', e));
+if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+  navigator.serviceWorker.register('sw.js').catch(e => console.warn('sw', e));
+  navigator.serviceWorker.addEventListener('message', e => { if (e.data && e.data.nav) goNav(e.data.nav); });   // แตะแจ้งเตือนตอนแอปเปิดอยู่
+}
 db.init().then(u => u ? enter(u) : render()).catch(e => showToast('เชื่อมต่อฐานข้อมูลไม่สำเร็จ: ' + e.message, 'err', 8000));
 </script>
 </body>
