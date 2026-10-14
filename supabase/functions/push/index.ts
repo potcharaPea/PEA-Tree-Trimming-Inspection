@@ -1,5 +1,6 @@
 // Edge Function: ส่งแจ้งเตือนบนมือถือ (Web Push) — เรียกจาก trigger push_notify() ใน schema.sql เท่านั้น
 // body: { table, type: INSERT|UPDATE, record } · ยืนยันผู้เรียกด้วย header x-push-secret = secret PUSH_SECRET
+// deploy ผ่าน Dashboard ได้ slug สุ่ม: URL จริง = functions/v1/super-responder (ชื่อแสดง "push") — deploy ใหม่ต้องแก้ URL ใน push_notify() ด้วย
 // secrets ที่ต้องตั้ง: VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, PUSH_SECRET · deploy แบบ --no-verify-jwt
 // ผู้รับ: งานของผู้รับจ้าง → ผู้ตรวจของการไฟฟ้านั้น · งานของผู้ตรวจ → ผู้รับจ้างของ Feeder · ไม่ส่งให้คนที่ทำเอง
 import { createClient } from 'npm:@supabase/supabase-js@2';

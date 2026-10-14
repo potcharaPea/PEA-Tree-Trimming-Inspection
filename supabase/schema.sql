@@ -382,7 +382,7 @@ declare s text;
 begin
   select value into s from app_secrets where key = 'push_secret';
   if s is not null then
-    perform net.http_post('https://nwowvwadxdsidazolljk.supabase.co/functions/v1/push',
+    perform net.http_post('https://nwowvwadxdsidazolljk.supabase.co/functions/v1/super-responder',
       jsonb_build_object('table', tg_table_name, 'type', tg_op, 'record', to_jsonb(new)),
       '{}'::jsonb, jsonb_build_object('Content-Type', 'application/json', 'x-push-secret', s));
   end if;
