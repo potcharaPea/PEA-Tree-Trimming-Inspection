@@ -157,17 +157,17 @@ create or replace function my_office() returns text
 language sql stable security definer set search_path = public as $$ select office_id from profiles where id = auth.uid() $$;
 create or replace function is_inspector() returns boolean
 language sql stable security definer set search_path = public as $$ select exists (select 1 from profiles where id = auth.uid() and role = 'inspector') $$;
--- เห็น feeder: ผู้ตรวจ = ทุก feeder ในการไฟฟ้าตน, ผู้รับจ้าง = เฉพาะที่ผูกไว้
+-- เห็น feeder: ผู้ตรวจ = ทุก feeder ในการไฟฟ้าตน (ผู้ดูแลระบบ = ทุกการไฟฟ้า), ผู้รับจ้าง = เฉพาะที่ผูกไว้
 create or replace function is_sysadmin() returns boolean
 language sql stable security definer set search_path = public as $$ select coalesce((select is_admin from profiles where id = auth.uid()), false) $$;
 create or replace function can_see_feeder(f uuid) returns boolean
 language sql stable security definer set search_path = public as $$
-  select exists (select 1 from feeders x where x.id = f and x.office_id = my_office()
+  select exists (select 1 from feeders x where x.id = f and (x.office_id = my_office() or is_sysadmin())
     and (is_inspector() or exists (select 1 from feeder_contractors fc where fc.feeder_id = f and fc.contractor_id = auth.uid())))
 $$;
 create or replace function can_edit_feeder(f uuid) returns boolean
 language sql stable security definer set search_path = public as $$
-  select is_inspector() and exists (select 1 from feeders x where x.id = f and x.office_id = my_office())
+  select is_inspector() and exists (select 1 from feeders x where x.id = f and (x.office_id = my_office() or is_sysadmin()))
 $$;
 
 alter table offices            enable row level security;
@@ -196,7 +196,7 @@ drop policy if exists feeders_read on feeders;
 drop policy if exists feeders_write on feeders;
 create policy feeders_read  on feeders for select to authenticated using (can_see_feeder(id));
 create policy feeders_write on feeders for all to authenticated
-  using (is_inspector() and office_id = my_office()) with check (is_inspector() and office_id = my_office());
+  using (is_inspector() and (office_id = my_office() or is_sysadmin())) with check (is_inspector() and (office_id = my_office() or is_sysadmin()));
 
 drop policy if exists fc_read on feeder_contractors;
 drop policy if exists fc_write on feeder_contractors;

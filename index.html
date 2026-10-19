@@ -646,7 +646,7 @@ async function login() {
   if (!S.loginId.trim() || !S.password) return set({ loginErr: 'กรุณากรอกชื่อผู้ใช้และรหัสผ่าน' });
   if (LIVE && !S.online) return set({ loginErr: 'ไม่มีสัญญาณ — เข้าสู่ระบบครั้งแรกต้องออนไลน์' });
   set({ busy: true, loginErr: null });
-  let u; try { u = await db.signIn(S.office, S.loginId, S.password); } catch (e) { return set({ busy: false, loginErr: e.message }); }
+  let u; try { u = await signInAny(S.office, S.loginId, S.password); } catch (e) { return set({ busy: false, loginErr: e.message }); }
   if (!u) return set({ busy: false, loginErr: LIVE ? 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง' : 'ไม่พบชื่อผู้ใช้นี้ใน ' + officeName(S.office) });
   // บทบาทที่เลือกต้องตรงกับบัญชี (กันสับสน: เลือก "ผู้รับจ้าง" แต่ใช้บัญชีผู้ตรวจ)
   if (u.role !== S.role) {
@@ -654,10 +654,24 @@ async function login() {
     const th = r => r === 'inspector' ? 'ผู้ตรวจ' : 'ผู้รับจ้าง';
     return set({ busy: false, loginErr: 'บัญชีนี้เป็น' + th(u.role) + ' — กรุณาเลือกบทบาท "' + th(u.role) + '" แล้วเข้าสู่ระบบใหม่' });
   }
+  if (u.is_admin) try { sessionStorage.setItem(ADM_OFFICE, S.office); } catch (e) {}
   enter(u);
 }
+// ผู้ดูแลระบบเข้าได้ทุกการไฟฟ้า: อีเมลผูกการไฟฟ้าต้นสังกัด → ล็อกอินที่การไฟฟ้าที่เลือกไม่ผ่าน ลองการไฟฟ้าอื่น รับเฉพาะบัญชี is_admin
+const ADM_OFFICE = 'tree_adm_office';
+async function signInAny(office, username, password) {
+  const u = await db.signIn(office, username, password); if (u) return u;
+  for (const o of S.offices) {
+    if (o.id === office) continue;
+    const x = await db.signIn(o.id, username, password).catch(() => null);
+    if (x && x.is_admin) return x;
+    if (x) await db.signOut();
+  }
+  return null;
+}
 async function enter(u) {
-  S.me = u;
+  let ao = null; try { ao = sessionStorage.getItem(ADM_OFFICE); } catch (e) {}
+  S.me = u.is_admin && ao ? { ...u, office: ao } : u;   // ผู้ดูแลระบบ: ทำงานในการไฟฟ้าที่เลือกตอนล็อกอิน (RLS: is_sysadmin)
   try { await db.load(); } catch (e) { showToast('โหลดข้อมูลไม่สำเร็จ: ' + e.message, 'err', 6000); }
   // รีเฟรช = กลับหน้าเดิม (งาน/แท็บ/ช่องที่เปิดอยู่) ถ้างานนั้นยังอยู่ · ล็อกอินใหม่หลัง logout = หน้าแรก (logout ล้างไว้แล้ว)
   let nav = null; try { nav = JSON.parse(sessionStorage.getItem(NAV_KEY)); } catch (e) {}
@@ -675,7 +689,7 @@ async function logout() {
   if (LIVE && S.queue) return showToast('ยังมีข้อมูลรอส่ง ' + S.queue + ' รายการ — ต่อเน็ตให้ส่งครบก่อนออกจากระบบ', 'err', 6000);
   clearTimeout(rtT); db.unsubscribe(); await push.drop().catch(() => {}); S.pushOn = false; await db.signOut(); if (LIVE) await snap.clear();
   if (RO()) Object.assign(S, S.pubBak, { pubView: false, pubBak: null });
-  try { sessionStorage.removeItem(NAV_KEY); } catch (e) {}
+  try { sessionStorage.removeItem(NAV_KEY); sessionStorage.removeItem(ADM_OFFICE); } catch (e) {}
   set({ me: null, screen: 'login', showNotif: false, sheet: null, draft: null, ...(LIVE ? { feeders: [], defects: [], notifs: [], unread: 0, outages: [] } : {}) });
 }
 // ── แจ้งเตือนบนมือถือ (Web Push): ผูกเครื่องนี้กับบัญชีที่ล็อกอิน · Edge Function "push" ส่งเมื่อมีรายการใหม่ ──
@@ -1123,10 +1137,12 @@ function syncMini() {
 const tile = (v, l, fg, big) => `<div class="tile"${big ? ' style="padding:14px 16px"' : ''}><b style="color:${fg || '#1C1324'}${big ? ';font-size:30px' : ''}">${v}</b><span>${l}</span></div>`;
 const fact = (l, v) => `<div class="fact"><div>${l}</div><div>${esc(v)}</div></div>`;
 const pill = (st, extra) => `<span class="pill" style="background:${st.bg};color:${st.fg}${extra || ''}">${st.glyph} ${st.label}</span>`;
-const photo = (ph, cls) => `<div class="ph ${cls || ''}">${ph.url ? `<i style="background-image:url('${ph.url}')"></i>` : ''}<span>${esc(ph.label)}</span></div>`;
+const photo = (ph, cls) => `<div class="ph ${cls || ''}"${ph.url ? ' data-act="zoom" style="cursor:zoom-in"' : ''}>${ph.url ? `<i style="background-image:url('${ph.url}')"></i>` : ''}<span>${esc(ph.label)}</span></div>`;
 const CAM = '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3.5"/></svg>';
 const FOLDER = (sz, sw) => `<svg width="${sz}" height="${sz}" viewBox="0 0 24 24" fill="none" stroke="${P}" stroke-width="${sw}" stroke-linejoin="round"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5H9l2 2.5h8.5A1.5 1.5 0 0 1 21 9v9.5a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z"/></svg>`;
-const camInput = (fileAct, arg) => `<label class="cam"><input type="file" accept="image/*" capture="environment" multiple data-file="${fileAct}"${arg ? ` data-arg="${arg}"` : ''} style="display:none">${CAM}ถ่ายรูป</label>`;
+// ถ่ายรูป + เลือกรูปจากเครื่อง (data-gal: รับเฉพาะรูปที่มีพิกัดในไฟล์ — ดู listener 'change')
+const camInput = (fileAct, arg) => ['capture="environment"', 'data-gal'].map((x, g) => `<label class="cam"><input type="file" accept="image/*" ${x} multiple data-file="${fileAct}"${arg ? ` data-arg="${arg}"` : ''} style="display:none">${g ? GAL + 'เลือกรูป' : CAM + 'ถ่ายรูป'}</label>`).join('');
+const GAL = '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/></svg>';
 // ปุ่ม chip เลือกได้ (ม่วงเต็มเมื่อเลือก)
 const chipBtn = (on, label, act, arg, css) => `<button data-act="${act}" data-arg="${esc(arg)}" style="${css};border:1.5px solid ${on ? P : '#C9BED1'};background:${on ? P : '#fff'};color:${on ? '#fff' : '#1C1324'}">${esc(label)}</button>`;
 const CHIP_TYPE = 'min-height:44px;padding:6px 14px;border-radius:22px;font-size:15px;font-weight:700';
@@ -1136,7 +1152,7 @@ const CHIP_FILTER = 'flex:none;height:40px;padding:0 14px;border-radius:20px;fon
 function vHeader() {
   if (S.screen === 'login') return '';
   const f = curF(), insp = isInsp();
-  const t = { dash: ['ระบบตรวจรับงานตัดต้นไม้', insp ? 'ผู้ตรวจงาน' : 'ผู้รับจ้าง'],
+  const t = { dash: ['ระบบตรวจรับงานตัดต้นไม้', (insp ? 'ผู้ตรวจงาน' : 'ผู้รับจ้าง') + (S.me && S.me.is_admin ? ' · ' + officeName(S.me.office) : '')],
     import: ['นำเข้า Feeder', 'เลือกโฟลเดอร์ KMZ'], overview: ['ภาพรวมทุกการไฟฟ้า', 'ดูอย่างเดียว'], admin: ['จัดการระบบ', 'ผู้ดูแลระบบ'], feeder: [f && f.code, f && (f.line + (RO() ? ' · ดูอย่างเดียว' : ''))], report: ['รายงานสรุป ' + (f ? f.code : ''), f && f.line], fdash: ['ความคืบหน้า ' + (f ? f.code : ''), f && f.line] }[S.screen] || ['', ''];
   const net = S.online ? { bg: 'rgba(255,255,255,.14)', fg: '#fff', dot: '#7CE08A', label: 'ออนไลน์' } : { bg: '#FFE082', fg: '#2B2230', dot: '#2B2230', label: 'ออฟไลน์' };
   const banner = !S.online ? { bg: '#2B2230', fg: '#FFE082', icon: '!', text: S.queue ? 'ออฟไลน์ — บันทึกไว้ในเครื่อง ' + S.queue + ' รายการ รอส่ง' : 'ออฟไลน์ — ข้อมูลที่บันทึกจะเก็บไว้ในเครื่อง รอส่ง' }
@@ -1888,7 +1904,7 @@ function render() {
   if (/feeder|report|fdash/.test(S.screen) && !curF()) Object.assign(S, { screen: 'dash', cur: null, sheet: null, draft: null, del: null });
   const f = curF(), screen = S.screen === 'login' ? vLogin() : S.screen === 'overview' ? vOverview() : S.screen === 'dash' ? vDash() : S.screen === 'import' ? vImport() : S.screen === 'admin' ? vAdmin()
     : !f ? '' : S.screen === 'feeder' ? vFeeder() : S.screen === 'report' ? vReport() : S.screen === 'fdash' ? vFDash() : '';
-  shell.innerHTML = vHeader() + `<div data-main style="flex:1;min-height:0;position:relative;display:flex;flex-direction:column">${screen}${vSheet()}${vNotif()}${vDelete()}${vWorkConfirm()}${vToast()}</div>`;
+  shell.innerHTML = vHeader() + `<div data-main style="flex:1;min-height:0;position:relative;display:flex;flex-direction:column">${screen}${vSheet()}${vNotif()}${vDelete()}${vWorkConfirm()}${vToast()}${S.zoom ? `<div data-act="zoomClose" style="position:absolute;inset:0;z-index:3000;background:rgba(0,0,0,.92);display:flex;align-items:center;justify-content:center;padding:8px"><img src="${esc(S.zoom)}" alt="" style="max-width:100%;max-height:100%;object-fit:contain"><span style="position:absolute;top:12px;right:12px;width:44px;height:44px;border-radius:22px;background:rgba(255,255,255,.2);color:#fff;font-size:22px;font-weight:800;display:flex;align-items:center;justify-content:center">✕</span></div>` : ''}</div>`;
   shell.querySelectorAll('[data-scroll]').forEach(el => { if (sc[el.dataset.scroll]) el.scrollTop = sc[el.dataset.scroll]; });
   const ms = shell.querySelector('[data-slot=map]'); if (ms) ms.replaceWith(mapEl);
   const mn = shell.querySelector('[data-slot=mini]'); if (mn) mn.replaceWith(miniEl);
@@ -1902,6 +1918,8 @@ const ACT = {
   logout,
   toggleOnline: () => LIVE ? flush() : toggleOnline(), toggleNotif: () => set({ showNotif: !S.showNotif, unread: 0 }),
   goOverview() { set({ screen: 'overview', ov: { rows: null, office: '', at: null, loading: false, err: null } }); ovLoad(); },
+  zoom: (_, el) => { const m = /url\(["']?(.*?)["']?\)$/.exec(el.querySelector('i').style.backgroundImage); if (m) set({ zoom: m[1] }); },
+  zoomClose: () => set({ zoom: null }),
   ovRefresh: () => ovLoad(), ovOffice: id => set({ ov: { ...S.ov, office: id === S.ov.office ? '' : id } }),
   async ovOpen(id) {
     if (S.busy) return; set({ busy: true });
@@ -1949,7 +1967,7 @@ const ACT = {
     if (!a.user.trim() || !a.pw) return set({ admLogin: { ...a, err: 'กรุณากรอกชื่อผู้ใช้และรหัสผ่าน' } });
     if (LIVE && !S.online) return set({ admLogin: { ...a, err: 'ไม่มีสัญญาณ — การจัดการระบบต้องออนไลน์' } });
     set({ busy: true });
-    let u; try { u = await db.signIn(S.office, a.user, a.pw); } catch (e) { return set({ busy: false, admLogin: { ...a, err: e.message } }); }
+    let u; try { u = await signInAny(S.office, a.user, a.pw); } catch (e) { return set({ busy: false, admLogin: { ...a, err: e.message } }); }
     if (!u) return set({ busy: false, admLogin: { ...a, pw: '', err: 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง' } });
     if (!u.is_admin) { await db.signOut(); return set({ busy: false, admLogin: { ...a, pw: '', err: 'บัญชีนี้ไม่ใช่ผู้ดูแลระบบ' } }); }
     Object.assign(S, { me: u, busy: false, admLogin: null });
@@ -2059,12 +2077,19 @@ async function geoPhotos(fs) {
   return ps.map((ph, i) => { const x = exs[i]; return { ...ph, taken: x.taken || null, ...(x.lat != null ? { lat: x.lat, lng: x.lng, src: 'exif' } : u ? { lat: u.lat, lng: u.lng, src: 'gps' } : {}) }; });
 }
 const needOnline = () => LIVE && !S.online && (showToast('ไม่มีสัญญาณ — การย้อน/ลบต้องออนไลน์', 'off'), true);
-shell.addEventListener('click', e => { const el = e.target.closest('[data-act]'); if (!el || el.disabled) return; ACT[el.dataset.act](el.dataset.arg); });
+shell.addEventListener('click', e => { const el = e.target.closest('[data-act]'); if (!el || el.disabled) return; ACT[el.dataset.act](el.dataset.arg, el); });
 // พิมพ์ = เก็บค่าเงียบๆ (ไม่ render → focus ไม่หลุด); data-rr = render ตอน change
 const setPath = (path, v) => { const k = path.split('.'), last = k.pop(); let o = S; for (const p of k) o = o[p]; o[last] = v; };
 shell.addEventListener('input', e => { const p = e.target.dataset.in; if (p) setPath(p, e.target.value); });
-shell.addEventListener('change', e => {
-  const t = e.target; if (t.dataset.file) return FILE[t.dataset.file](e);
+shell.addEventListener('change', async e => {
+  const t = e.target;
+  if (t.dataset.file && 'gal' in t.dataset) {   // เลือกจากเครื่อง: GPS เครื่องตอนเลือก ≠ ที่ถ่าย → ต้องมีพิกัดใน EXIF เท่านั้น
+    const fs = Array.from(t.files || []), exs = await Promise.all(fs.map(readExif)), ok = fs.filter((_, i) => exs[i].lat != null); t.value = '';
+    if (ok.length < fs.length) showToast((fs.length - ok.length) + ' รูปไม่มีพิกัดในไฟล์ — ไม่ได้แนบ (เปิดตำแหน่งในแอปกล้อง แล้วถ่ายใหม่)', 'err', 6000);
+    if (ok.length) FILE[t.dataset.file]({ target: { files: ok, dataset: t.dataset } });
+    return;
+  }
+  if (t.dataset.file) return FILE[t.dataset.file](e);
   if (t.dataset.in === 'office' && !LIVE) S.loginId = defaultUser(t.value, S.role);
   if (t.dataset.in && 'rr' in t.dataset) render();
 });
