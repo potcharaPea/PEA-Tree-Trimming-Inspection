@@ -839,15 +839,15 @@ function saveDefect() {
     return pendMsg(r, 'บันทึกจุดบกพร่อง ' + r.code + ' แล้ว', 'บันทึก' + (LIVE ? 'จุดบกพร่อง' : ' ' + r.code) + 'ไว้ในเครื่อง · รอส่ง');
   });
 }
-function passSeg(seq) {
+// ผ่านทั้งช่วง / ผ่านจุดบกพร่อง → เรียกจาก wconfInfo หลังยืนยัน 2 ชั้น
+async function passSeg(seq) {
   const f = curF(), seg = f.segments.find(s => s.seq === seq);
-  run(async () => pendMsg(await db.do('passSegment', { feederId: f.id, segId: seg.id, seq }), 'บันทึก: ช่วงที่ ' + seq + ' ผ่านทั้งช่วง', 'ผ่านช่วงที่ ' + seq + ' · บันทึกไว้ในเครื่อง รอส่ง'));
+  return pendMsg(await db.do('passSegment', { feederId: f.id, segId: seg.id, seq }), 'บันทึก: ช่วงที่ ' + seq + ' ผ่านทั้งช่วง', 'ผ่านช่วงที่ ' + seq + ' · บันทึกไว้ในเครื่อง รอส่ง');
 }
 const evPayload = (d, kind, note, photos) => ({ evId: uuid(), defectId: d.id, feederCode: (S.feeders.find(f => f.id === d.feeder_id) || {}).code, kind, note, photos,
   round_no: kind === 'fix_submitted' ? d.round_no : d.round_no + 1 });
-function passDefect() {
-  const d = S.defects.find(x => x.id === S.panel.id);
-  run(async () => pendMsg(await db.do('addEvent', evPayload(d, 'passed', '', [])), d.code + ' ผ่านการตรวจ', d.code + ' ผ่านการตรวจ · บันทึกไว้ในเครื่อง รอส่ง'));
+async function passDefect(d) {
+  return pendMsg(await db.do('addEvent', evPayload(d, 'passed', '', [])), d.code + ' ผ่านการตรวจ', d.code + ' ผ่านการตรวจ · บันทึกไว้ในเครื่อง รอส่ง');
 }
 function saveReject() {
   const fm = S.form; if (!fm.note.trim()) return set({ err: 'กรุณาระบุเหตุผลที่ไม่ผ่าน' });
@@ -896,7 +896,7 @@ function saveOutage(reject) {
 function undoStep(f, x) {
   if (RO() || f.closed_at) return null;
   const insp = isInsp(), fin = workOf(x, 'finished'), st = workOf(x, 'started'), prog = progOf(x);
-  if (insp && x.passed_at) return x.pending ? null : { what: 'ผ่านทั้งช่วง', back: 'ตามงานตัด/จุดบกพร่องของช่วง', go: () => db.unpassSeg(f, x) };
+  if (insp && x.passed_at) return x.pending ? null : { what: 'ผ่านทั้งช่วง', back: 'ตามงานตัด/จุดบกพร่องของช่วง', keep: true, go: () => db.unpassSeg(f, x) };
   if (!insp && !/cutting|cut/.test(segSt(f, x))) return null;
   if (fin) return fin.pending ? null : { what: 'แจ้งตัดเสร็จ', back: SEG.cutting.label, go: () => db.deleteWork(f, x, fin) };
   if (!st || st.pending || prog.some(w => w.pending)) return null;
@@ -907,15 +907,22 @@ function undoStep(f, x) {
 function defUndo(d) {
   const f = curF(), last = d.events[d.events.length - 1], prev = d.events[d.events.length - 2];
   if (!isInsp() || RO() || !f || f.closed_at || !last || d.events.some(e => e.pending)) return null;
-  return { what: last.kind === 'created' ? 'พบจุดบกพร่อง (ลบจุดนี้ทั้งจุด)' : EV[last.kind][4], back: prev ? DEF[EV_ST[prev.kind]].label : 'ไม่มีจุดนี้' };
+  return { what: last.kind === 'created' ? 'พบจุดบกพร่อง (ลบจุดนี้ทั้งจุด)' : EV[last.kind][4], back: prev ? DEF[EV_ST[prev.kind]].label : 'ไม่มีจุดนี้', keep: last.kind === 'passed' };
 }
 // ยืนยัน 2 ชั้น (แก้รายงาน / ย้อนขั้นตอน / ลบรูป / ย้อนผลจุดบกพร่อง): ชั้นที่ 1 สรุปสิ่งที่จะเปลี่ยน → ชั้นที่ 2 ยืนยันอีกครั้ง (ไม่ใช้รหัส)
 function wconfInfo() {
   const c = S.wconf, f = curF(); if (!c || !f) return null;
-  const undoBox = (title, what, back, extra) => ({ red: true, title, sum: `• ยกเลิก "${what}"${extra ? '<br>• ' + extra : ''}<br>• สถานะจะกลับเป็น "${back}"`, q: 'ยืนยันย้อนขั้นตอนนี้จริงหรือไม่? กู้คืนไม่ได้', ok: 'ยืนยันย้อน' });
+  // keep = ย้อนแค่ "ผ่าน" → ข้อมูลเดิมอยู่ครบ กดผ่านใหม่ได้
+  const undoBox = (title, what, back, extra, keep) => ({ red: true, title, sum: `• ยกเลิก "${what}"${extra ? '<br>• ' + extra : ''}<br>• สถานะจะกลับเป็น "${back}"${keep ? '<br>• <b>ข้อมูลเดิมอยู่ครบ</b> (รูป รายงานงานตัด จุดบกพร่อง ไม่ถูกลบ)' : ''}`,
+    q: keep ? 'ยืนยันย้อนการผ่านนี้? กดผ่านใหม่ได้ภายหลัง' : 'ยืนยันย้อนขั้นตอนนี้จริงหรือไม่? กู้คืนไม่ได้', ok: 'ยืนยันย้อน' });
+  const passBox = (title, sum, go) => ({ head: '#2E7D32', title, sum, q: 'ยืนยันให้ผ่านจริงหรือไม่?', ok: 'ยืนยันผ่าน', go });
+  if (c.mode === 'passDef') {
+    const d = S.defects.find(x => x.id === c.id); if (!d || d.status !== 'submitted') return null;
+    return passBox('ผ่านการตรวจ · ' + d.code, `• จุดบกพร่อง ${esc(d.code)} (ช่วงที่ ${d.seq}) จะเป็น "ผ่าน"<br>• ผู้รับจ้างจะได้รับแจ้งผล`, () => passDefect(d));
+  }
   if (c.mode === 'undoDef') {
     const d = S.defects.find(x => x.id === c.id), u = d && defUndo(d); if (!u) return null;
-    return { ...undoBox('ย้อนผล · ' + d.code, u.what, u.back), go: async () => { const gone = d.events.length === 1; await db.undoEvent(d);
+    return { ...undoBox('ย้อนผล · ' + d.code, u.what, u.back, '', u.keep), go: async () => { const gone = d.events.length === 1; await db.undoEvent(d);
       if (gone) S.panel = { mode: 'segment', seq: d.seq }; return 'ย้อน ' + d.code + ': ยกเลิก "' + u.what + '" แล้ว'; } };
   }
   if (c.mode === 'outDel') {
@@ -926,6 +933,7 @@ function wconfInfo() {
       go: async () => { await db.outage('del', null, o.id); return 'ยกเลิกคำขอดับไฟช่วงที่ ' + o.seq + ' แล้ว'; } };
   }
   const s = f.segments.find(x => x.seq === c.seq), t = 'ช่วงที่ ' + s.seq;
+  if (c.mode === 'pass') return s.passed_at ? null : passBox('ผ่านทั้งช่วง · ' + t, `• ${t} จะเป็น "ผ่าน" ทั้งช่วง<br>• ผู้รับจ้างจะได้รับแจ้งผล`, () => passSeg(s.seq));
   if (c.mode === 'edit') {
     const w = workOf(s, c.kind), fm = S.form; if (!w) return null;
     return { title: 'บันทึกการแก้ไข · ' + t, sum: `• รูป ${w.photos.length} → ${fm.photos.length} รูป${fm.note !== w.note ? '<br>• แก้หมายเหตุ' : ''}<br>• ผู้ตรวจจะเห็นว่ารายงานนี้ "แก้ไขเมื่อ" วันเวลานี้`,
@@ -939,12 +947,12 @@ function wconfInfo() {
       go: async () => { await db.deleteWork(f, s, w); return 'ลบรูป "' + tag + '" ' + t + ' แล้ว'; } };
   }
   const u = undoStep(f, s); if (!u) return null;
-  return { ...undoBox('ย้อนขั้นตอน · ' + t, u.what, u.back, u.extra), go: async () => { await u.go(); return 'ย้อน ' + t + ': ยกเลิก "' + u.what + '" แล้ว'; } };
+  return { ...undoBox('ย้อนขั้นตอน · ' + t, u.what, u.back, u.extra, u.keep), go: async () => { await u.go(); return 'ย้อน ' + t + ': ยกเลิก "' + u.what + '" แล้ว'; } };
 }
-function wconfGo() { const i = wconfInfo(); S.wconf = null; if (!i) return render(); run(async () => [await i.go(), 'ok']); }
+function wconfGo() { const i = wconfInfo(); S.wconf = null; if (!i) return render(); run(async () => { const r = await i.go(); return Array.isArray(r) ? r : [r, 'ok']; }); }
 function vWorkConfirm() {
   const i = wconfInfo(); if (!i) return '';
-  const step1 = S.wconf.step === 1, head = i.red ? '#B3261E' : SEG.cut.solid;
+  const step1 = S.wconf.step === 1, head = i.red ? '#B3261E' : i.head || SEG.cut.solid;
   const btn = (act, label, main) => `<button data-act="${act}" ${main && S.busy ? 'disabled' : ''} style="flex:1;height:52px;border-radius:12px;font-size:16px;font-weight:800;${main ? `border:0;background:${head};color:#fff` : 'border:1.5px solid #C9BED1;background:#fff;color:#1C1324'}">${label}</button>`;
   return `<div data-noprint data-act="noop" style="position:absolute;inset:0;z-index:1450;background:rgba(28,19,36,.6);display:flex;align-items:center;justify-content:center;padding:20px">
     <div style="width:min(100%,420px);background:#fff;border-radius:18px;box-shadow:0 12px 40px rgba(0,0,0,.35);overflow:hidden">
@@ -1940,11 +1948,11 @@ const ACT = {
   viewMap: () => set({ view: 'map' }), viewList: () => set({ view: 'list' }), toggleLegend: () => set({ legend: !S.legend }), toggleBase: () => set({ base: S.base === 'sat' ? 'osm' : 'sat' }),
   locate() { if (!S.user) return showToast(S.gpsErr || 'กำลังหาตำแหน่ง GPS…', 'off'); centerTo = [S.user.lat, S.user.lng]; render(); },
   clearSeg: () => set({ panel: { mode: 'list' } }), panelBack, chip: k => set({ chip: k }),
-  selectSeg: seq => selectSeg(+seq), openDefect, passSeg: seq => passSeg(+seq), startDefect: seq => startDefect(seq ? +seq : null),
+  selectSeg: seq => selectSeg(+seq), openDefect, passSeg: seq => set({ wconf: { mode: 'pass', seq: +seq, step: 1 } }), startDefect: seq => startDefect(seq ? +seq : null),
   nav: a => { const [lat, lng] = a.split(',').map(Number); nav(lat, lng); },
   startFix: id => set({ sheet: 'fix', err: null, form: { id, note: '', photos: [] } }),
   startReject: () => set({ sheet: 'reject', err: null, form: { id: S.panel.id, note: '', photos: [] } }),
-  passDefect,
+  passDefect: () => set({ wconf: { mode: 'passDef', id: S.panel.id, step: 1 } }),
   print() { const t = document.title, f = curF(); document.title = 'รายงาน ' + f.code + (f.line ? ' ' + f.line : ''); window.print(); document.title = t; },
   closeFeeder,
   delStart() {
