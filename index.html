@@ -641,7 +641,7 @@ async function run(work) {
   }
 }
 // กำลังดูไส้ในงานสาธารณะ (RO): ไม่โหลดทับด้วยข้อมูลของบัญชีตน
-async function refresh() { if (RO()) return; try { await db.load(); softRender(); } catch (e) { showToast('โหลดข้อมูลไม่สำเร็จ: ' + e.message, 'err', 6000); } }
+async function refresh() { if (RO()) return; try { await db.load(); softRender(); return true; } catch (e) { showToast('โหลดข้อมูลไม่สำเร็จ: ' + e.message, 'err', 6000); } }
 async function login() {
   if (!S.loginId.trim() || !S.password) return set({ loginErr: 'กรุณากรอกชื่อผู้ใช้และรหัสผ่าน' });
   if (LIVE && !S.online) return set({ loginErr: 'ไม่มีสัญญาณ — เข้าสู่ระบบครั้งแรกต้องออนไลน์' });
@@ -673,6 +673,7 @@ async function enter(u) {
   let ao = null; try { ao = sessionStorage.getItem(ADM_OFFICE); } catch (e) {}
   S.me = u.is_admin && ao ? { ...u, office: ao } : u;   // ผู้ดูแลระบบ: ทำงานในการไฟฟ้าที่เลือกตอนล็อกอิน (RLS: is_sysadmin)
   try { await db.load(); } catch (e) { showToast('โหลดข้อมูลไม่สำเร็จ: ' + e.message, 'err', 6000); }
+  if (LIVE) try { S.notifs = JSON.parse(localStorage.getItem(NOTIF_KEY + S.me.id)) || []; } catch (e) {}
   // รีเฟรช = กลับหน้าเดิม (งาน/แท็บ/ช่องที่เปิดอยู่) ถ้างานนั้นยังอยู่ · ล็อกอินใหม่หลัง logout = หน้าแรก (logout ล้างไว้แล้ว)
   let nav = null; try { nav = JSON.parse(sessionStorage.getItem(NAV_KEY)); } catch (e) {}
   const back = nav && /^(feeder|report|fdash)$/.test(nav.screen) && S.feeders.some(f => f.id === nav.cur)
@@ -769,11 +770,16 @@ async function readExif(file) {
   return {};
 }
 const readPhotos = async files => Promise.all(files.map(async f => { const s = await shrink(f); return { label: s.name, url: URL.createObjectURL(s), file: s }; }));
+// ประวัติกระดิ่ง: เก็บ 15 รายการล่าสุดในเครื่อง (แยกตามบัญชี) · ใหม่เข้า เก่าสุดหลุด
+const NOTIF_KEY = 'tree_notifs_', NOTIF_MAX = 15;
+function addNotif(n) {
+  S.notifs = [n, ...S.notifs].slice(0, NOTIF_MAX); S.unread++;
+  if (LIVE) try { localStorage.setItem(NOTIF_KEY + S.me.id, JSON.stringify(S.notifs)); } catch (e) {}
+}
 // ผู้รับจ้างส่งหลักฐาน → badge + toast ของผู้ตรวจ
 function notifyFix(d, who, quiet) {
   const f = S.feeders.find(x => x.id === d.feeder_id) || {};
-  S.notifs = [{ id: Date.now(), defectId: d.id, feederId: d.feeder_id, text: who + ' ส่งหลักฐานการแก้ไข ' + d.code, sub: f.code + ' · ช่วงที่ ' + d.seq + ' · ' + d.issue_type, at: nowIso() }, ...S.notifs];
-  S.unread++;
+  addNotif({ id: Date.now(), defectId: d.id, feederId: d.feeder_id, text: who + ' ส่งหลักฐานการแก้ไข ' + d.code, sub: f.code + ' · ช่วงที่ ' + d.seq + ' · ' + d.issue_type, at: nowIso() });
   if (quiet) render(); else showToast('อัปเดตทันที: ' + d.code + ' ผู้รับจ้างส่งหลักฐานแล้ว · รอตรวจ', 'rt', 4500);
 }
 async function onRemoteEvent(e) {
@@ -794,8 +800,8 @@ function onOutage(p) {
   const f = S.feeders.find(x => x.id === o.feeder_id), s = f && f.segments.find(x => x.id === o.segment_id); if (!s) return;
   const at = f.code + ' ช่วงที่ ' + s.seq;
   if (p.eventType === 'INSERT' && isInsp() && o.actor_id !== S.me.id) {
-    S.notifs = [{ id: Date.now(), feederId: f.id, seq: s.seq, text: whoOf(o.actor_id) + ' ขอดับไฟ ' + at, sub: 'วันที่ขอ ' + fmtDay(o.want_date) + (o.want_time ? ' · ' + o.want_time : ''), at: nowIso() }, ...S.notifs];
-    S.unread++; showToast('อัปเดตทันที: ผู้รับจ้างขอดับไฟ ' + at, 'rt', 4500);
+    addNotif({ id: Date.now(), feederId: f.id, seq: s.seq, text: whoOf(o.actor_id) + ' ขอดับไฟ ' + at, sub: 'วันที่ขอ ' + fmtDay(o.want_date) + (o.want_time ? ' · ' + o.want_time : ''), at: nowIso() });
+    showToast('อัปเดตทันที: ผู้รับจ้างขอดับไฟ ' + at, 'rt', 4500);
   } else if (p.eventType === 'UPDATE' && !isInsp() && o.actor_id === S.me.id && o.status !== 'requested')
     showToast(o.status === 'confirmed' ? 'นัดดับไฟแล้ว: ' + at + ' · ' + fmtDay(o.ok_date) + (o.ok_time ? ' ' + o.ok_time : '') : 'คำขอดับไฟ ' + at + ' ไม่อนุมัติ', 'rt', 6000);
 }
@@ -1174,6 +1180,8 @@ function vHeader() {
       <div style="font-size:13px;line-height:1.3;opacity:.92;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(t[1])}</div>
     </div>
     <button data-act="toggleOnline" title="${LIVE ? (S.queue ? 'แตะเพื่อส่งข้อมูลที่ค้าง' : 'สถานะเครือข่าย') : 'แตะเพื่อจำลองสถานะเครือข่าย'}" style="flex:none;height:36px;padding:0 12px;border-radius:18px;border:1.5px solid rgba(255,255,255,.6);background:${net.bg};color:${net.fg};font-size:14px;font-weight:700;display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:${net.dot}"></span>${net.label}</button>
+    ${S.me && !RO() ? `<button data-act="refreshNow" ${S.busy ? 'disabled' : ''} aria-label="รีเฟรชข้อมูล" style="flex:none;width:44px;height:44px;border:0;border-radius:22px;background:transparent;color:#fff;display:flex;align-items:center;justify-content:center">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg></button>` : ''}
     ${insp && S.me && !RO() ? `<button data-act="toggleNotif" aria-label="การแจ้งเตือน" style="flex:none;position:relative;width:44px;height:44px;border:0;border-radius:22px;background:transparent;color:#fff;display:flex;align-items:center;justify-content:center">
       <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
       ${S.unread ? `<span style="position:absolute;top:3px;right:1px;min-width:20px;height:20px;padding:0 5px;border-radius:10px;background:#FFD54F;color:#2B2230;font-size:12px;font-weight:800;display:flex;align-items:center;justify-content:center;border:2px solid ${P}">${S.unread}</span>` : ''}</button>` : ''}
@@ -1925,6 +1933,7 @@ const ACT = {
   login, credits: v => set({ credits: !!v }),
   logout,
   toggleOnline: () => LIVE ? flush() : toggleOnline(), toggleNotif: () => set({ showNotif: !S.showNotif, unread: 0 }),
+  refreshNow: async () => { if (await refresh()) showToast('อัปเดตข้อมูลล่าสุดแล้ว', 'ok', 2500); },
   goOverview() { set({ screen: 'overview', ov: { rows: null, office: '', at: null, loading: false, err: null } }); ovLoad(); },
   zoom: (_, el) => { const m = /url\(["']?(.*?)["']?\)$/.exec(el.querySelector('i').style.backgroundImage); if (m) set({ zoom: m[1] }); },
   zoomClose: () => set({ zoom: null }),
@@ -2111,6 +2120,8 @@ if (LIVE) {
   addEventListener('online', () => { set({ online: true }); flush(); });
   addEventListener('offline', () => set({ online: false }));
   setInterval(flush, 30000);
+  // มือถือพักแอป/ล็อกจอ realtime หลุด → event ระหว่างนั้นหาย · กลับมาที่แอปเมื่อไร โหลดใหม่ให้ทันที
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && S.me) refresh(); });
 }
 // Service Worker: เปิดแอปได้ตอนไม่มีเน็ต (ต้องเป็น https/localhost)
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
