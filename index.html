@@ -608,7 +608,7 @@ function segPassAt(f, s) {
   if (segSt(f, s) !== 'pass') return '–'; if (s.passed_at) return fmtDay(s.passed_at);
   let last = null; dOf(f.id, s.seq).forEach(d => d.events.forEach(h => { if (h.kind === 'passed') last = h.at; })); return last ? fmtDay(last) : '–';
 }
-// ผู้ที่ตรวจผ่านช่วงนี้ (คู่กับ segPassAt) · ไม่รู้ชื่อ เช่น โหมดดูอย่างเดียวของการไฟฟ้าอื่น → "ผู้ตรวจ"
+// ผู้ที่ตรวจผ่านช่วงนี้ (คู่กับ segPassAt) · ไม่รู้ชื่อ เช่น โปรไฟล์ผู้กดอยู่นอกการไฟฟ้าตน → "ผู้ตรวจ"
 function segPassBy(f, s) {
   if (segSt(f, s) !== 'pass') return '–'; if (s.passed_at) return s.passed_who || 'ผู้ตรวจ';
   let last = null; dOf(f.id, s.seq).forEach(d => d.events.forEach(h => { if (h.kind === 'passed') last = h; })); return last ? last.who || 'ผู้ตรวจ' : '–';
@@ -1435,6 +1435,7 @@ function vListItem(it) {
       ${x.status === 'submitted' ? doneBox('#FFEFD6', '#7A3B00', 'ส่งแล้ว · รอตรวจ') : ''}${x.status === 'passed' ? doneBox('#E3F2E4', '#1B5E20', '✓ ผ่านแล้ว') : ''}</div>`}
   </div>`;
 }
+const passLine = (f, x) => `<div style="padding:8px 12px;border-radius:10px;background:${SEG.pass.bg};color:${SEG.pass.fg};font-size:15px;font-weight:700;overflow-wrap:anywhere">${SEG.pass.glyph} ผ่านโดย ${esc(segPassBy(f, x))} · ${segPassAt(f, x)}${x.pending ? ' (รอส่ง)' : ''}</div>`;
 function segView(f) {
   const x = f.segments.find(y => y.seq === S.panel.seq) || f.segments[0], sst = segSt(f, x), ds = dOf(f.id, x.seq), out = ds.filter(y => y.status !== 'passed').length, passed = sst === 'pass';
   return { x, st: SEG[sst], ds, out, passed, dis: out > 0 || passed, summary: ds.length ? ds.length + ' จุดบกพร่อง · ค้าง ' + out : 'ยังไม่มีจุดบกพร่อง',
@@ -1558,6 +1559,7 @@ function vFeeder() {
         <div style="flex:1;min-width:0"><div style="font-size:18px;font-weight:800;line-height:1.25">ช่วงที่ ${sv.x.seq} · ${sv.x.length_km.toFixed(2)} กม.</div><div style="font-size:14px;color:#5E5566">${esc(sv.short)}</div></div>
         <button data-act="clearSeg" aria-label="ปิด" style="flex:none;width:44px;height:44px;border:0;border-radius:22px;background:#F6F3F8;font-size:18px;color:#1C1324">✕</button></div>
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">${pill(sv.st, ';font-size:14px;font-weight:800;padding:3px 10px')}<span style="font-size:14px;color:#4A3F52">${sv.summary}</span></div>
+      ${sv.passed ? passLine(f, sv.x) : ''}
       ${RO() ? '' : insp ? (f.closed_at ? '' : `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">${passBtn(sv, 52)}${pinBtn(sv, 52)}</div>`) : workBtn(f, sv.x, 52)}
       <button data-act="viewList" style="height:44px;border:0;background:transparent;color:${P};font-size:15px;font-weight:700;text-decoration:underline">ดูรายละเอียดช่วงและจุดบกพร่อง ›</button></div>` : ''}
   </div>`;
@@ -1569,7 +1571,8 @@ function vFeeder() {
     const x = sv.x, mid = along(x.coords, .5);
     panel = backHead('กลับไปรายการ', `<div style="font-size:18px;font-weight:800">ช่วงที่ ${x.seq}</div>`, f.code + ' · ' + f.line, pill(sv.st, ';flex:none;padding:5px 12px;font-size:14px;font-weight:800')) +
       `<div data-scroll="seg" style="flex:1;min-height:0;overflow:auto;padding:16px;display:grid;align-content:start;gap:18px">
-        <div class="facts">${fact('แรงดัน', dash(x.voltage))}${fact('ความยาวช่วง', x.length_km.toFixed(2) + ' กม.')}${fact('ต้นที่สำรวจจัดทำแผน', x.plan_trees == null ? '–' : x.plan_trees + ' ต้น')}${fact('ความหนาแน่น', densText(x))}${fact('ต้นสำรวจราคากลาง', x.price_trees == null ? '–' : x.price_trees + ' ต้น')}${fact('ไฟล์ต้นทาง', x.source_file)}${fact('วันที่ผ่าน', segPassAt(f, x) + (x.pending ? ' (รอส่ง)' : ''))}${fact('ผู้ตรวจผ่าน', segPassBy(f, x))}${fact('ระยะจากคุณ', fmtDist(segDist(x)))}</div>
+        ${sv.passed ? passLine(f, x) : ''}
+        <div class="facts">${fact('แรงดัน', dash(x.voltage))}${fact('ความยาวช่วง', x.length_km.toFixed(2) + ' กม.')}${fact('ต้นที่สำรวจจัดทำแผน', x.plan_trees == null ? '–' : x.plan_trees + ' ต้น')}${fact('ความหนาแน่น', densText(x))}${fact('ต้นสำรวจราคากลาง', x.price_trees == null ? '–' : x.price_trees + ' ต้น')}${fact('ไฟล์ต้นทาง', x.source_file)}${fact('วันที่ผ่าน', segPassAt(f, x) + (x.pending ? ' (รอส่ง)' : ''))}${fact('ระยะจากคุณ', fmtDist(segDist(x)))}</div>
         ${workBlock(f, x)}
         ${outageBlock(f, x)}
         <div style="display:flex;flex-direction:column;gap:8px"><div style="font-size:16px;font-weight:800">จุดบกพร่องในช่วงนี้ (${sv.ds.length})</div>

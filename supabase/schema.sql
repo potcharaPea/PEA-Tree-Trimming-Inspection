@@ -289,20 +289,21 @@ revoke all on function public_overview() from public;
 grant execute on function public_overview() to anon, authenticated;
 
 -- ── ไส้ในงาน 1 Feeder (เปิดจากหน้าภาพรวม, ไม่ต้องล็อกอิน, ดูอย่างเดียว) ──
--- ช่วง + งานตัด + จุดบกพร่อง + ประวัติ พร้อม path รูป (ผู้ตรวจแสดงเป็น "ผู้ตรวจ" ไม่เปิดชื่อบุคคล)
+-- ช่วง + งานตัด + จุดบกพร่อง + ประวัติ พร้อม path รูป (ผู้ตรวจแสดงเป็น "ผู้ตรวจ" ยกเว้นการกดผ่าน ซึ่งเปิดชื่อบุคคล · บัญชี is_admin แสดง "ผู้ดูแลระบบ")
 create or replace function public_feeder(fid uuid) returns json
 language sql stable security definer set search_path = public as $$
   select json_build_object('id', f.id, 'code', f.code, 'line', f.line_name, 'office', f.office_id, 'closed_at', f.closed_at, 'imported_at', f.created_at,
     'contractor', (select coalesce(p.company, p.full_name) from feeder_contractors fc join profiles p on p.id = fc.contractor_id where fc.feeder_id = f.id limit 1),
     'segments', (select coalesce(json_agg(json_build_object('id', s.id, 'seq', s.seq, 'voltage', s.voltage, 'plan_trees', s.plan_trees, 'density_label', s.density_label,
         'density_range', s.density_range, 'price_trees', s.price_trees, 'length_km', s.length_km, 'geom', s.geom_geojson, 'source_file', s.source_file, 'passed_at', s.passed_at,
+        'passed_who', (select case when p.is_admin then 'ผู้ดูแลระบบ' else p.full_name || ' (ผู้ตรวจ)' end from profiles p where p.id = s.passed_by),
         'works', (select coalesce(json_agg(json_build_object('id', w.id, 'kind', w.kind, 'at', w.created_at, 'edited', w.updated_at, 'note', w.note, 'photos', w.photos,
             'who', (select coalesce(p.company, p.full_name) from profiles p where p.id = w.actor_id)) order by w.created_at), '[]') from segment_works w where w.segment_id = s.id)
       ) order by s.seq), '[]') from segments s where s.feeder_id = f.id),
     'defects', (select coalesce(json_agg(json_build_object('id', d.id, 'code_no', d.code_no, 'segment_id', d.segment_id, 'lat', d.lat, 'lng', d.lng,
         'issue_type', d.issue_type, 'status', d.status, 'round_no', d.round_no,
         'events', (select coalesce(json_agg(json_build_object('kind', e.kind, 'round_no', e.round_no, 'note', e.note, 'photos', e.photos, 'at', e.created_at,
-            'who', (select case when p.role = 'inspector' then 'ผู้ตรวจ' else coalesce(p.company, p.full_name) end from profiles p where p.id = e.actor_id)) order by e.created_at), '[]')
+            'who', (select case when p.role <> 'inspector' then coalesce(p.company, p.full_name) when e.kind <> 'passed' then 'ผู้ตรวจ' when p.is_admin then 'ผู้ดูแลระบบ' else p.full_name || ' (ผู้ตรวจ)' end from profiles p where p.id = e.actor_id)) order by e.created_at), '[]')
           from defect_events e where e.defect_id = d.id)
       ) order by d.code_no), '[]') from defects d where d.feeder_id = f.id))
   from feeders f where f.id = fid
