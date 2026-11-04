@@ -74,7 +74,7 @@ button,[data-act],a,label{touch-action:manipulation;-webkit-tap-highlight-color:
   [data-rcard]{border:0 !important;padding:0 !important;gap:14px !important}
   [data-ptable]{overflow:visible !important}
   [data-ptable]>div{min-width:0 !important}
-  .prow{grid-template-columns:26px 70px 34px minmax(0,1fr) 40px 60px 52px 44px 98px 60px !important;gap:4px !important;padding:5px 6px !important;font-size:10.5px !important;break-inside:avoid}
+  .prow{grid-template-columns:26px 64px 30px minmax(0,1fr) 36px 56px 44px 40px 88px 56px 84px !important;gap:4px !important;padding:5px 6px !important;font-size:10.5px !important;break-inside:avoid}
   .prow span span{white-space:normal !important;padding:1px 5px !important}
   .psign{break-inside:avoid}
   [data-rmeta]{grid-template-columns:repeat(4,1fr) !important}
@@ -1627,7 +1627,8 @@ function vFeeder() {
           <div data-act="selectSeg" data-arg="${g.x.seq}" style="display:flex;align-items:center;gap:12px;padding:12px 14px;cursor:pointer;border-left:6px solid ${g.st.solid}">
             <div style="flex:none;width:40px;height:40px;border-radius:10px;background:#F6F3F8;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:800">${g.x.seq}</div>
             <div style="flex:1;min-width:0"><div style="font-size:16px;font-weight:800">ช่วงที่ ${g.x.seq} <span class="sub">· ${g.x.length_km.toFixed(2)} กม.</span></div>
-              <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:13px;color:#5E5566"><span style="padding:1px 8px;border-radius:999px;background:${g.st.bg};color:${g.st.fg};font-weight:700">${g.st.glyph} ${g.st.label}</span>${outBadge(f, g.x)}<span>${esc(g.sub)}</span></div></div>
+              <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:13px;color:#5E5566"><span style="padding:1px 8px;border-radius:999px;background:${g.st.bg};color:${g.st.fg};font-weight:700">${g.st.glyph} ${g.st.label}</span>${outBadge(f, g.x)}<span>${esc(g.sub)}</span></div>
+              ${g.st === SEG.pass ? `<div style="font-size:13px;font-weight:700;color:${SEG.pass.fg};margin-top:2px;overflow-wrap:anywhere">ผ่านโดย ${esc(segPassBy(f, g.x))}</div>` : ''}</div>
             <span style="flex:none;font-size:24px;color:#9A8FA3">›</span></div>
           ${isWork ? `<div style="border-top:1px solid #ECE6EF;padding:10px 14px;display:grid;grid-template-columns:1fr 1.6fr;gap:8px">${(() => { const m = along(g.x.coords, .5); return `<button data-act="nav" data-arg="${m[0]},${m[1]}" class="bnav" style="border-radius:10px">นำทาง</button>`; })()}${workBtn(f, g.x, 48) || doneBox('#EEEAF0', '#3F3846', 'ปิดงานแล้ว')}</div>` : g.ds.map(itemOf).map(vListItem).join('')}</div>`).join('')}
         ${groups.length ? '' : `<div style="padding:40px 20px;text-align:center;color:#5E5566;font-size:16px">${insp ? 'ไม่มีจุดบกพร่องในสถานะนี้' : cd[0] === 'todo' ? 'ไม่มีจุดที่ต้องแก้ไข' : 'ไม่มีจุดในสถานะนี้'}</div>`}
@@ -1771,17 +1772,17 @@ function vAdmin() {
 
 function vReport() {
   const f = curF(), st = fStats(f), canClose = st.allPass && !f.closed_at;
-  const COLS = 'grid-template-columns:50px 110px 70px minmax(150px,1fr) 80px 100px 90px 80px 150px 100px';
+  const COLS = 'grid-template-columns:50px 110px 70px minmax(150px,1fr) 80px 100px 90px 80px 150px 100px 150px';
   const finAt = x => { const w = workOf(x, 'finished'); return w ? fmtDay(w.at) : '–'; };
   const t2 = (v, l, fg) => `<div style="border:1px solid #E3DCE8;border-radius:10px;padding:12px 14px"><div style="font-size:26px;font-weight:800;line-height:1.1;color:${fg}">${v}</div><div style="font-size:14px;color:#5E5566">${l}</div></div>`;
   const sign = role => `<div style="text-align:center;font-size:15px"><div style="border-bottom:1px dotted #5E5566;height:44px"></div><div style="margin-top:6px">${role}</div></div>`;
   return `<div data-scroll="report" class="scroll">
-    <div data-noprint style="max-width:1000px;margin:0 auto;padding:16px 16px 0;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+    <div data-noprint style="max-width:1314px;margin:0 auto;padding:16px 16px 0;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
       <button data-act="print" class="bp" style="padding:0 18px">พิมพ์ / ส่งออก PDF</button>
       ${canClose ? `<button data-act="closeFeeder" class="bp" style="padding:0 18px;background:#2E7D32">✓ ปิดงาน Feeder ${esc(f.code)}</button>` : ''}
       ${st.allPass ? '' : `<div style="font-size:15px;color:#5E5566">ปิดงานได้เมื่อทุกช่วงผ่าน (ค้าง ${f.segments.length - st.passN} ช่วง)</div>`}
       <button data-act="delStart" class="bo" style="margin-left:auto;padding:0 18px;border-color:#B3261E;color:#B3261E">ลบงาน</button></div>
-    <div data-rwrap style="max-width:1000px;margin:12px auto 32px;padding:0 16px"><div data-rcard style="background:#fff;border:1px solid #E3DCE8;border-radius:12px;padding:24px;display:flex;flex-direction:column;gap:22px">
+    <div data-rwrap style="max-width:1314px;margin:12px auto 32px;padding:0 16px"><div data-rcard style="background:#fff;border:1px solid #E3DCE8;border-radius:12px;padding:24px;display:flex;flex-direction:column;gap:22px">
       <div style="display:flex;gap:14px;align-items:center;border-bottom:3px solid ${P};padding-bottom:16px;flex-wrap:wrap">
         <div style="flex:none;width:52px;height:52px;border-radius:12px;background:${P};color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800">กฟภ.</div>
         <div style="flex:1;min-width:220px"><div style="font-size:15px;color:#5E5566">รายงานสรุปผลการตรวจรับงานตัดต้นไม้ · การไฟฟ้าส่วนภูมิภาค ${esc(officeName(f.office))}</div><div style="font-size:24px;font-weight:800;line-height:1.3"><span class="mono" style="color:${P}">${esc(f.code)}</span> ${esc(f.line)}</div></div>
@@ -1790,10 +1791,10 @@ function vReport() {
         ${[['ผู้รับจ้าง', f.contractor], ['ผู้ตรวจรับ', dispName(S.me)], ['วันที่นำเข้าข้อมูล', fmtDay(f.imported_at)], ['วันที่ปิดงาน', f.closed_at ? fmtDay(f.closed_at) : 'ยังไม่ปิดงาน']].map(([l, v]) => `<div><div style="font-size:13px;color:#5E5566">${l}</div><div style="font-weight:700">${esc(v)}</div></div>`).join('')}</div>
       <div data-rtiles style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px">${t2(f.segments.length, 'ช่วงงานตัด', '#1C1324')}${t2(st.km.toFixed(2), 'ระยะทาง (กม.)', '#1C1324')}${t2(st.passN + '/' + f.segments.length, 'ช่วงที่ผ่าน', '#2E7D32')}${t2(st.ds.length, 'จุดบกพร่องทั้งหมด', '#1C1324')}${t2(st.out + st.rev, 'จุดค้าง (ยังไม่ผ่าน)', st.out + st.rev ? '#C62828' : '#1B5E20')}${t2(st.rounds || '–', 'จำนวนรอบตรวจ', P)}</div>
       <div style="display:flex;flex-direction:column;gap:8px"><div style="font-size:16px;font-weight:800">ผลการตรวจรายช่วง</div>
-        <div data-ptable style="overflow-x:auto;border:1px solid #E3DCE8;border-radius:10px"><div style="min-width:1080px"><!-- = คอลัมน์ 980 + ช่องไฟ 72 + padding 24 (เดิม 960 คอลัมน์สุดท้ายล้นกรอบ) -->
-          <div class="prow" style="display:grid;${COLS};gap:8px;padding:10px 12px;background:#F1E7F6;font-size:13px;font-weight:800;color:#3E0F55"><span>ช่วง</span><span>แรงดัน</span><span>ต้น</span><span>ความหนาแน่น</span><span>กม.</span><span>แจ้งตัดเสร็จ</span><span>จุดบกพร่อง</span><span>รอบตรวจ</span><span>สถานะ</span><span>วันที่ผ่าน</span></div>
-          ${f.segments.map((x, i) => { const ds = dOf(f.id, x.seq), sg = SEG[st.st[i]]; return `<div class="row prow" style="${COLS};padding:10px 12px;font-size:14px"><b>${x.seq}</b><span>${esc(dash(x.voltage))}</span><span>${dash(x.plan_trees)}</span><span>${esc(densText(x))}</span><span>${x.length_km.toFixed(2)}</span><span>${finAt(x)}</span><span>${ds.length || '–'}</span><span>${ds.length ? Math.max(...ds.map(y => y.round_no)) : (x.passed_at ? 1 : '–')}</span><span><span style="padding:2px 8px;border-radius:999px;background:${sg.bg};color:${sg.fg};font-weight:700;white-space:nowrap">${sg.glyph} ${sg.label}</span></span><span>${segPassAt(f, x)}</span></div>`; }).join('')}
-          <div class="prow" style="display:grid;${COLS};gap:8px;padding:10px 12px;border-top:2px solid ${P};font-size:14px;font-weight:800"><span>รวม</span><span></span><span>${st.trees}</span><span></span><span>${st.km.toFixed(2)}</span><span>${st.cutN}/${f.segments.length}</span><span>${st.ds.length}</span><span></span><span>ผ่าน ${st.passN}/${f.segments.length}</span><span></span></div>
+        <div data-ptable style="overflow-x:auto;border:1px solid #E3DCE8;border-radius:10px"><div style="min-width:1234px"><!-- = คอลัมน์ 1130 + ช่องไฟ 80 + padding 24 (เดิม 960 คอลัมน์สุดท้ายล้นกรอบ) -->
+          <div class="prow" style="display:grid;${COLS};gap:8px;padding:10px 12px;background:#F1E7F6;font-size:13px;font-weight:800;color:#3E0F55"><span>ช่วง</span><span>แรงดัน</span><span>ต้น</span><span>ความหนาแน่น</span><span>กม.</span><span>แจ้งตัดเสร็จ</span><span>จุดบกพร่อง</span><span>รอบตรวจ</span><span>สถานะ</span><span>วันที่ผ่าน</span><span>ผู้ตรวจผ่าน</span></div>
+          ${f.segments.map((x, i) => { const ds = dOf(f.id, x.seq), sg = SEG[st.st[i]]; return `<div class="row prow" style="${COLS};padding:10px 12px;font-size:14px"><b>${x.seq}</b><span>${esc(dash(x.voltage))}</span><span>${dash(x.plan_trees)}</span><span>${esc(densText(x))}</span><span>${x.length_km.toFixed(2)}</span><span>${finAt(x)}</span><span>${ds.length || '–'}</span><span>${ds.length ? Math.max(...ds.map(y => y.round_no)) : (x.passed_at ? 1 : '–')}</span><span><span style="padding:2px 8px;border-radius:999px;background:${sg.bg};color:${sg.fg};font-weight:700;white-space:nowrap">${sg.glyph} ${sg.label}</span></span><span>${segPassAt(f, x)}</span><span style="overflow-wrap:anywhere">${esc(segPassBy(f, x))}</span></div>`; }).join('')}
+          <div class="prow" style="display:grid;${COLS};gap:8px;padding:10px 12px;border-top:2px solid ${P};font-size:14px;font-weight:800"><span>รวม</span><span></span><span>${st.trees}</span><span></span><span>${st.km.toFixed(2)}</span><span>${st.cutN}/${f.segments.length}</span><span>${st.ds.length}</span><span></span><span>ผ่าน ${st.passN}/${f.segments.length}</span><span></span><span></span></div>
         </div></div></div>
       <div class="psign" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:24px;margin-top:12px">${sign('ผู้ตรวจรับ')}${sign('ผู้รับจ้าง')}</div>
     </div></div></div>`;
