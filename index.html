@@ -166,7 +166,7 @@ const TOAST_BG = { ok:'#1B5E20', off:'#2B2230', rt:'#B85C00', err:'#B3261E' };
 // ════════════════════════════════════════════════════════════════
 const MOCK_OFFICES = [ { id:'kce', name:'กฟส.คำชะอี' }, { id:'ktw', name:'กฟส.กันทรวิชัย' } ];
 const MOCK_USERS = [
-  { id:'somchai.j', username:'somchai.j', office:'kce', role:'inspector',  full_name:'สมชาย ใจดี', is_admin:true },
+  { id:'somchai.j', username:'somchai.j', office:'kce', role:'inspector',  full_name:'ผู้ดูแลระบบ', is_admin:true },
   { id:'romyen.co', username:'romyen.co', office:'kce', role:'contractor', full_name:'ผู้ประสานงาน ร่มเย็น', company:'หจก. ร่มเย็นการโยธา' },
   { id:'thaipruek', username:'thaipruek', office:'kce', role:'contractor', full_name:'ผู้ประสานงาน ไทยพฤกษ์', company:'บริษัท ไทยพฤกษ์ เซอร์วิส จำกัด' },
   { id:'wichai.k',  username:'wichai.k',  office:'ktw', role:'inspector',  full_name:'วิชัย กล้าหาญ' },
@@ -174,7 +174,9 @@ const MOCK_USERS = [
 ];
 const officeName = id => (S.offices.find(o => o.id === id) || {}).name || '';
 const contractorsOf = office => S.profiles.filter(u => u.office === office && u.role === 'contractor');
-const whoOf = id => { const u = S.profiles.find(p => p.id === id); return !u ? '' : u.role === 'inspector' ? u.full_name + ' (ผู้ตรวจ)' : u.company || u.full_name; };
+const dispName = u => u.is_admin ? 'ผู้ดูแลระบบ' : u.full_name;   // บัญชีผู้ดูแลระบบแสดงตำแหน่งแทนชื่อบุคคล
+const inspName = u => u.is_admin ? dispName(u) : u.full_name + ' (ผู้ตรวจ)';
+const whoOf = id => { const u = S.profiles.find(p => p.id === id); return !u ? '' : u.role === 'inspector' ? inspName(u) : u.company || u.full_name; };
 const pad4 = n => 'D-' + String(n).padStart(4, '0');
 const uuid = () => crypto.randomUUID();
 const fail = (e, ctx) => { console.error(ctx, e); throw new Error((e && e.message) || String(e)); };
@@ -240,7 +242,7 @@ const db = {
   },
   async fetchAll() {
     const [pr, fe, fc, sg, df, ev, wk] = await Promise.all([
-      q(sb.from('profiles').select('id,office_id,username,full_name,role,company'), 'profiles'),
+      q(sb.from('profiles').select('id,office_id,username,full_name,role,company,is_admin'), 'profiles'),
       q(sb.from('feeders').select('*').order('code'), 'feeders'),
       q(sb.from('feeder_contractors').select('*'), 'feeder_contractors'),
       q(sb.from('segments').select('*').order('seq'), 'segments'),
@@ -257,7 +259,7 @@ const db = {
     const worksOf = sid => wk.filter(w => w.segment_id === sid).map(w => ({ id: w.id, kind: w.kind, at: w.created_at, edited: w.updated_at, note: w.note || '', photos: viewPh(w.photos), who: whoOf(w.actor_id), pending: false }));
     S.feeders = fe.map(f => {
       const cid = (fc.find(x => x.feeder_id === f.id) || {}).contractor_id, con = S.profiles.find(p => p.id === cid);
-      const segments = sg.filter(s => s.feeder_id === f.id).map(s => (segById[s.id] = { ...s, length_km: +s.length_km, coords: s.geom_geojson.coordinates.map(c => [c[1], c[0]]), pending: false, works: worksOf(s.id) }));
+      const segments = sg.filter(s => s.feeder_id === f.id).map(s => (segById[s.id] = { ...s, length_km: +s.length_km, coords: s.geom_geojson.coordinates.map(c => [c[1], c[0]]), pending: false, passed_who: whoOf(s.passed_by), works: worksOf(s.id) }));
       return { id: f.id, code: f.code, line: f.line_name, office: f.office_id, contractor_id: cid || null, contractor: con ? con.company || con.full_name : '–', closed_at: f.closed_at, imported_at: f.created_at, segments };
     });
     S.outages = ot.map(o => ({ ...o, seq: (segById[o.segment_id] || {}).seq, who: whoOf(o.actor_id), by: whoOf(o.decided_by) }));
@@ -398,11 +400,12 @@ function seed() {
   A.segments[0].passed_at = A.segments[1].passed_at = '2026-09-23T17:00';
   B.segments[0].passed_at = '2026-09-24T17:00';
   Cc.segments.forEach(s => { s.passed_at = '2026-09-18T17:00'; }); Cc.closed_at = '2026-09-19T10:00';
+  [A.segments[0], A.segments[1], B.segments[0], ...Cc.segments].forEach(s => { s.passed_who = 'ผู้ดูแลระบบ'; });
   const ph = (n, b) => Array.from({ length: n }, (_, i) => ({ label: 'IMG_' + (b+i) + '.jpg', url: null }));
   const H = (kind, round_no, at, note, photos) => ({ kind, round_no, at, note, photos: photos || [], pending:false });
   const Df = (code, f, seq, t, type, status, round_no, events) => { const p = along(f.segments[seq-1].coords, t);
     return { id:code, code, feeder_id:f.id, seq, lat:p[0]+0.00006, lng:p[1]-0.00004, issue_type:type, status, round_no,
-      events: events.map(h => ({ ...h, who: h.kind === 'fix_submitted' ? f.contractor : 'สมชาย ใจดี (ผู้ตรวจ)' })) }; };
+      events: events.map(h => ({ ...h, who: h.kind === 'fix_submitted' ? f.contractor : 'ผู้ดูแลระบบ' })) }; };
   const defects = [
     Df('D-0412',A,3,.3,'กิ่งค้างบนสาย','open',1,[H('created',1,'2026-09-23T09:15','กิ่งยูคาลิปตัสค้างบนสายเฟส B ยาวประมาณ 2 ม.',ph(2,2301))]),
     Df('D-0413',A,3,.72,'ระยะห่างไม่ถึงเกณฑ์','submitted',1,[H('created',1,'2026-09-23T09:40','กิ่งมะม่วงห่างสาย 22 kV ไม่ถึง 3 ม.',ph(2,2306)),H('fix_submitted',1,'2026-09-26T14:05','ตัดเพิ่มให้ห่างสายประมาณ 3.5 ม.',ph(2,5120))]),
@@ -466,7 +469,7 @@ const local = {
     const w = { id: p.id, kind: p.kind, at: p.at, note: p.note, photos: viewPhotos(p.photos), who: myName(), pending };
     S.feeders = S.feeders.map(f => f.id !== p.feederId ? f : { ...f, segments: f.segments.map(s => s.seq === p.seq ? { ...s, works: [...(s.works || []), w] } : s) });
   },
-  passSegment(p, pending) { S.feeders = S.feeders.map(f => f.id !== p.feederId ? f : { ...f, segments: f.segments.map(s => s.seq === p.seq ? { ...s, passed_at: p.at, pending } : s) }); },
+  passSegment(p, pending) { S.feeders = S.feeders.map(f => f.id !== p.feederId ? f : { ...f, segments: f.segments.map(s => s.seq === p.seq ? { ...s, passed_at: p.at, passed_who: myName(), pending } : s) }); },
   closeFeeder(p) { S.feeders = S.feeders.map(f => f.id === p.feederId ? { ...f, closed_at: p.at } : f); }
 };
 // ── IndexedDB: queue = คิวรอส่ง, snap = สำเนาข้อมูลล่าสุด (เปิดแอปตอนไม่มีเน็ต) ──
@@ -571,7 +574,7 @@ function set(patch) { Object.assign(S, typeof patch === 'function' ? patch(S) : 
 // RO = ดูไส้ในงานจากหน้าภาพรวม (ดูอย่างเดียว): แสดงแบบผู้ตรวจ แต่ซ่อนปุ่มแก้ไขทุกปุ่ม
 const RO = () => !!S.pubView;
 const isInsp = () => RO() || !!(S.me && S.me.role === 'inspector');
-const myName = () => isInsp() ? S.me.full_name + ' (ผู้ตรวจ)' : S.me.company;
+const myName = () => isInsp() ? inspName(S.me) : S.me.company;
 
 // ── geo / format helpers ──
 function hav(a, b) { const R = 6371000, r = Math.PI / 180; const dl = (b[0]-a[0])*r, dg = (b[1]-a[1])*r; const x = Math.sin(dl/2)**2 + Math.cos(a[0]*r)*Math.cos(b[0]*r)*Math.sin(dg/2)**2; return 2*R*Math.asin(Math.sqrt(x)); }
@@ -604,6 +607,11 @@ const SEG_BAR = k => k === 'none' ? '#CFC8D4' : SEG[k].solid;   // แถบส�
 function segPassAt(f, s) {
   if (segSt(f, s) !== 'pass') return '–'; if (s.passed_at) return fmtDay(s.passed_at);
   let last = null; dOf(f.id, s.seq).forEach(d => d.events.forEach(h => { if (h.kind === 'passed') last = h.at; })); return last ? fmtDay(last) : '–';
+}
+// ผู้ที่ตรวจผ่านช่วงนี้ (คู่กับ segPassAt) · ไม่รู้ชื่อ เช่น โหมดดูอย่างเดียวของการไฟฟ้าอื่น → "ผู้ตรวจ"
+function segPassBy(f, s) {
+  if (segSt(f, s) !== 'pass') return '–'; if (s.passed_at) return s.passed_who || 'ผู้ตรวจ';
+  let last = null; dOf(f.id, s.seq).forEach(d => d.events.forEach(h => { if (h.kind === 'passed') last = h; })); return last ? last.who || 'ผู้ตรวจ' : '–';
 }
 function fStats(f) {
   const ds = dOf(f.id), st = f.segments.map(s => segSt(f, s)), passN = st.filter(x => x === 'pass').length;
@@ -1326,7 +1334,7 @@ function vFDash() {
         ${rounds.length ? '' : '<div style="font-size:15px;color:#5E5566">ยังไม่มีการตรวจ</div>'}</div>
       <div class="card" style="gap:4px"><div style="font-size:17px;font-weight:800;margin-bottom:6px">ความเคลื่อนไหวล่าสุด</div>
         ${acts.slice(0, 6).map(a => { if (a.w) { const k = SEG[a.w.kind === 'started' ? 'cutting' : 'cut']; return actRow('segOnMap', a.seg.seq, k.solid, k.glyph, '4px', (a.w.kind === 'started' ? 'เริ่มตัด' : a.w.kind === 'progress' ? 'ส่งรูป "' + ((a.w.photos[0] || {}).tag || '') + '"' : 'ตัดเสร็จ') + ' · ช่วงที่ ' + a.seg.seq, a.w.who + ' · ' + a.w.photos.length + ' รูป · ' + fmtAt(a.w.at)); }
-          if (a.seg) return actRow('segOnMap', a.seg.seq, '#2E7D32', '✓', '4px', 'ช่วงที่ ' + a.seg.seq + ' ผ่านทั้งช่วง', fmtDay(a.seg.passed_at));
+          if (a.seg) return actRow('segOnMap', a.seg.seq, '#2E7D32', '✓', '4px', 'ช่วงที่ ' + a.seg.seq + ' ผ่านทั้งช่วง', fmtDay(a.seg.passed_at) + ' · ' + segPassBy(f, a.seg));
           const e = EV[a.h.kind]; return actRow('defOnMap', a.d.id, e[0], e[1], e[2], e[4] + ' · ' + a.d.code, 'ช่วงที่ ' + a.d.seq + ' · ' + a.d.issue_type + ' · ' + fmtAt(a.h.at)); }).join('')}
         ${acts.length ? '' : '<div style="font-size:15px;color:#5E5566">ยังไม่มีความเคลื่อนไหว</div>'}</div>
     </div></div></div>`;
@@ -1560,7 +1568,7 @@ function vFeeder() {
     const x = sv.x, mid = along(x.coords, .5);
     panel = backHead('กลับไปรายการ', `<div style="font-size:18px;font-weight:800">ช่วงที่ ${x.seq}</div>`, f.code + ' · ' + f.line, pill(sv.st, ';flex:none;padding:5px 12px;font-size:14px;font-weight:800')) +
       `<div data-scroll="seg" style="flex:1;min-height:0;overflow:auto;padding:16px;display:grid;align-content:start;gap:18px">
-        <div class="facts">${fact('แรงดัน', dash(x.voltage))}${fact('ความยาวช่วง', x.length_km.toFixed(2) + ' กม.')}${fact('ต้นที่สำรวจจัดทำแผน', x.plan_trees == null ? '–' : x.plan_trees + ' ต้น')}${fact('ความหนาแน่น', densText(x))}${fact('ต้นสำรวจราคากลาง', x.price_trees == null ? '–' : x.price_trees + ' ต้น')}${fact('ไฟล์ต้นทาง', x.source_file)}${fact('วันที่ผ่าน', segPassAt(f, x) + (x.pending ? ' (รอส่ง)' : ''))}${fact('ระยะจากคุณ', fmtDist(segDist(x)))}</div>
+        <div class="facts">${fact('แรงดัน', dash(x.voltage))}${fact('ความยาวช่วง', x.length_km.toFixed(2) + ' กม.')}${fact('ต้นที่สำรวจจัดทำแผน', x.plan_trees == null ? '–' : x.plan_trees + ' ต้น')}${fact('ความหนาแน่น', densText(x))}${fact('ต้นสำรวจราคากลาง', x.price_trees == null ? '–' : x.price_trees + ' ต้น')}${fact('ไฟล์ต้นทาง', x.source_file)}${fact('วันที่ผ่าน', segPassAt(f, x) + (x.pending ? ' (รอส่ง)' : ''))}${fact('ผู้ตรวจผ่าน', segPassBy(f, x))}${fact('ระยะจากคุณ', fmtDist(segDist(x)))}</div>
         ${workBlock(f, x)}
         ${outageBlock(f, x)}
         <div style="display:flex;flex-direction:column;gap:8px"><div style="font-size:16px;font-weight:800">จุดบกพร่องในช่วงนี้ (${sv.ds.length})</div>
@@ -1696,7 +1704,7 @@ function vAdmin() {
   const officeOpts = sel => S.offices.map(o => `<option value="${o.id}"${o.id === sel ? ' selected' : ''}>${esc(o.name)}</option>`).join('');
   const userRow = u => {
     const self = u.id === S.me.id, badge = u.role === 'inspector' ? 'background:#F1E7F6;color:#4A1564' : 'background:#E8F0FB;color:#0D47A1';
-    const who = u.role === 'contractor' ? (u.company || '–') + (u.full_name ? ' · ' + u.full_name : '') : (u.full_name || '–');
+    const who = u.role === 'contractor' ? (u.company || '–') + (u.full_name ? ' · ' + u.full_name : '') : (dispName(u) || '–');
     return `<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:12px 0;border-top:1px solid #ECE6EF;opacity:${u.active ? 1 : .55}">
       <div style="flex:1;min-width:200px">
         <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"><span class="mono" style="font-weight:700">${esc(u.username)}</span>
@@ -1734,7 +1742,7 @@ function vAdmin() {
         <div style="padding:18px 20px;display:flex;flex-direction:column;gap:14px">
           ${cf.step === 1 && co ? `<div style="background:#FDE7E7;border-radius:12px;padding:12px 14px;font-size:15px;color:#8E1B1B;line-height:1.6">• รหัส <b class="mono">${esc(co.id)}</b> จะถูกลบถาวร กู้คืนไม่ได้<br>• ลบได้เฉพาะการไฟฟ้าที่ไม่มีผู้ใช้และไม่มีงาน (Feeder) เหลืออยู่</div>
             <div style="display:flex;gap:10px">${cbtn('admDelCancel', 'ยกเลิก')}${cbtn('admDelNext', 'ต่อไป', true)}</div>`
-          : cf.step === 1 ? `<div style="font-size:15px">${ROLE_TH[cu.role]} · ${esc(cu.role === 'contractor' ? cu.company || '–' : cu.full_name || '–')} · ${esc(officeName(cu.office_id))}</div>
+          : cf.step === 1 ? `<div style="font-size:15px">${ROLE_TH[cu.role]} · ${esc(cu.role === 'contractor' ? cu.company || '–' : dispName(cu) || '–')} · ${esc(officeName(cu.office_id))}</div>
             <div style="background:#FDE7E7;border-radius:12px;padding:12px 14px;font-size:15px;color:#8E1B1B;line-height:1.6">• บัญชีนี้จะเข้าสู่ระบบไม่ได้อีก<br>• ถ้ามีประวัติในระบบ (เคยบันทึกงาน/ส่งหลักฐาน) จะ <b>ปิดบัญชี</b> แทนการลบ เพื่อเก็บประวัติไว้ — เปิดกลับได้<br>• ถ้ายังไม่มีประวัติ จะ <b>ลบถาวร</b></div>
             <div style="display:flex;gap:10px">${cbtn('admDelCancel', 'ยกเลิก')}${cbtn('admDelNext', 'ต่อไป', true)}</div>`
           : `<label class="lbl"><span>กรอกรหัสยืนยันการลบ</span><input class="inp mono" data-in="adm.confirm.pin" type="password" inputmode="numeric" autocomplete="off" maxlength="6" value="${esc(cf.pin)}" style="text-align:center;font-size:24px;letter-spacing:8px"></label>
@@ -1778,7 +1786,7 @@ function vReport() {
         <div style="flex:1;min-width:220px"><div style="font-size:15px;color:#5E5566">รายงานสรุปผลการตรวจรับงานตัดต้นไม้ · การไฟฟ้าส่วนภูมิภาค ${esc(officeName(f.office))}</div><div style="font-size:24px;font-weight:800;line-height:1.3"><span class="mono" style="color:${P}">${esc(f.code)}</span> ${esc(f.line)}</div></div>
         ${pill(FEED[st.status], ';flex:none;padding:5px 12px;font-size:14px;font-weight:800')}</div>
       <div data-rmeta style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px 24px;font-size:15px">
-        ${[['ผู้รับจ้าง', f.contractor], ['ผู้ตรวจรับ', S.me.full_name], ['วันที่นำเข้าข้อมูล', fmtDay(f.imported_at)], ['วันที่ปิดงาน', f.closed_at ? fmtDay(f.closed_at) : 'ยังไม่ปิดงาน']].map(([l, v]) => `<div><div style="font-size:13px;color:#5E5566">${l}</div><div style="font-weight:700">${esc(v)}</div></div>`).join('')}</div>
+        ${[['ผู้รับจ้าง', f.contractor], ['ผู้ตรวจรับ', dispName(S.me)], ['วันที่นำเข้าข้อมูล', fmtDay(f.imported_at)], ['วันที่ปิดงาน', f.closed_at ? fmtDay(f.closed_at) : 'ยังไม่ปิดงาน']].map(([l, v]) => `<div><div style="font-size:13px;color:#5E5566">${l}</div><div style="font-weight:700">${esc(v)}</div></div>`).join('')}</div>
       <div data-rtiles style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px">${t2(f.segments.length, 'ช่วงงานตัด', '#1C1324')}${t2(st.km.toFixed(2), 'ระยะทาง (กม.)', '#1C1324')}${t2(st.passN + '/' + f.segments.length, 'ช่วงที่ผ่าน', '#2E7D32')}${t2(st.ds.length, 'จุดบกพร่องทั้งหมด', '#1C1324')}${t2(st.out + st.rev, 'จุดค้าง (ยังไม่ผ่าน)', st.out + st.rev ? '#C62828' : '#1B5E20')}${t2(st.rounds || '–', 'จำนวนรอบตรวจ', P)}</div>
       <div style="display:flex;flex-direction:column;gap:8px"><div style="font-size:16px;font-weight:800">ผลการตรวจรายช่วง</div>
         <div data-ptable style="overflow-x:auto;border:1px solid #E3DCE8;border-radius:10px"><div style="min-width:1080px"><!-- = คอลัมน์ 980 + ช่องไฟ 72 + padding 24 (เดิม 960 คอลัมน์สุดท้ายล้นกรอบ) -->
