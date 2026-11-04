@@ -662,7 +662,7 @@ async function login() {
     const th = r => r === 'inspector' ? 'ผู้ตรวจ' : 'ผู้รับจ้าง';
     return set({ busy: false, loginErr: 'บัญชีนี้เป็น' + th(u.role) + ' — กรุณาเลือกบทบาท "' + th(u.role) + '" แล้วเข้าสู่ระบบใหม่' });
   }
-  if (u.is_admin) try { sessionStorage.setItem(ADM_OFFICE, S.office); } catch (e) {}
+  if (u.is_admin) try { localStorage.setItem(ADM_OFFICE, S.office); } catch (e) {}
   enter(u);
 }
 // ผู้ดูแลระบบเข้าได้ทุกการไฟฟ้า: อีเมลผูกการไฟฟ้าต้นสังกัด → ล็อกอินที่การไฟฟ้าที่เลือกไม่ผ่าน ลองการไฟฟ้าอื่น รับเฉพาะบัญชี is_admin
@@ -678,8 +678,8 @@ async function signInAny(office, username, password) {
   return null;
 }
 async function enter(u) {
-  let ao = null; try { ao = sessionStorage.getItem(ADM_OFFICE); } catch (e) {}
-  S.me = u.is_admin && ao ? { ...u, office: ao } : u;   // ผู้ดูแลระบบ: ทำงานในการไฟฟ้าที่เลือกตอนล็อกอิน (RLS: is_sysadmin)
+  let ao = null; try { ao = localStorage.getItem(ADM_OFFICE); } catch (e) {}
+  S.me = u.is_admin && S.offices.some(o => o.id === ao) ? { ...u, office: ao } : u;   // ผู้ดูแลระบบ: ทำงานในการไฟฟ้าที่เลือกล่าสุด สลับได้ที่หน้าแรก (RLS: is_sysadmin)
   try { await db.load(); } catch (e) { showToast('โหลดข้อมูลไม่สำเร็จ: ' + e.message, 'err', 6000); }
   if (LIVE) try { S.notifs = JSON.parse(localStorage.getItem(NOTIF_KEY + S.me.id)) || []; } catch (e) {}
   // รีเฟรช = กลับหน้าเดิม (งาน/แท็บ/ช่องที่เปิดอยู่) ถ้างานนั้นยังอยู่ · ล็อกอินใหม่หลัง logout = หน้าแรก (logout ล้างไว้แล้ว)
@@ -698,7 +698,7 @@ async function logout() {
   if (LIVE && S.queue) return showToast('ยังมีข้อมูลรอส่ง ' + S.queue + ' รายการ — ต่อเน็ตให้ส่งครบก่อนออกจากระบบ', 'err', 6000);
   clearTimeout(rtT); db.unsubscribe(); await push.drop().catch(() => {}); S.pushOn = false; await db.signOut(); if (LIVE) await snap.clear();
   if (RO()) Object.assign(S, S.pubBak, { pubView: false, pubBak: null });
-  try { sessionStorage.removeItem(NAV_KEY); sessionStorage.removeItem(ADM_OFFICE); } catch (e) {}
+  try { sessionStorage.removeItem(NAV_KEY); localStorage.removeItem(ADM_OFFICE); } catch (e) {}
   set({ me: null, screen: 'login', showNotif: false, sheet: null, draft: null, ...(LIVE ? { feeders: [], defects: [], notifs: [], unread: 0, outages: [] } : {}) });
 }
 // ── แจ้งเตือนบนมือถือ (Web Push): ผูกเครื่องนี้กับบัญชีที่ล็อกอิน · Edge Function "push" ส่งเมื่อมีรายการใหม่ ──
@@ -1280,6 +1280,7 @@ function vDash() {
       <div><div style="font-size:15px;color:#5E5566">${insp ? 'ผู้ตรวจงาน' : 'ผู้รับจ้าง'}</div><div style="font-size:26px;font-weight:800;line-height:1.25">${insp ? 'ภาพรวมงานตรวจรับ' : 'งานตัดและงานแก้ไข'}</div></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap"><button data-act="goOverview" class="bo" style="padding:0 18px">ภาพรวมทุกการไฟฟ้า</button>
       ${insp && S.wide ? `<button data-act="goImport" class="bp" style="padding:0 20px;display:flex;align-items:center;gap:8px"><span style="font-size:22px;line-height:1">+</span>นำเข้า Feeder</button>` : ''}</div></div>
+    ${S.me.is_admin ? `<label class="lbl" style="max-width:360px"><span>การไฟฟ้าที่ดูอยู่</span><select class="inp" data-in="me.office" data-rr style="padding:0 10px">${S.offices.map(o => `<option value="${esc(o.id)}"${o.id === S.me.office ? ' selected' : ''}>${esc(o.name)}</option>`).join('')}</select></label>` : ''}
     ${vPushCard()}
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px">${tiles.map(t => tile(t[0], t[1], t[2], true)).join('')}</div>
     <div style="font-size:19px;font-weight:700;margin-top:4px">${insp ? 'Feeder ทั้งหมด' : 'Feeder ที่ได้รับมอบหมาย'}</div>
@@ -2116,6 +2117,7 @@ shell.addEventListener('change', async e => {
   }
   if (t.dataset.file) return FILE[t.dataset.file](e);
   if (t.dataset.in === 'office' && !LIVE) S.loginId = defaultUser(t.value, S.role);
+  if (t.dataset.in === 'me.office') try { localStorage.setItem(ADM_OFFICE, t.value); } catch (e) {}
   if (t.dataset.in && 'rr' in t.dataset) render();
 });
 shell.addEventListener('keydown', e => { if (e.key === 'Enter' && S.screen === 'login' && e.target.tagName === 'INPUT') S.admLogin ? ACT.admLoginGo() : login(); });
