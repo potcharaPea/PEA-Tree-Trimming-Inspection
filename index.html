@@ -1585,7 +1585,7 @@ function vFeeder() {
     panel = backHead('กลับ', `<div class="mono" style="font-weight:700;font-size:16px">${esc(x.code)}</div>`, f.code + ' · ช่วงที่ ' + x.seq,
         `<span style="flex:none;display:flex;align-items:center;gap:6px;padding:6px 12px;border-radius:999px;background:${k.bg};color:${k.fg};font-size:14px;font-weight:800">${defIco(k, 20, 12)}${k.label}</span>`) +
       `<div data-scroll="def" style="flex:1;min-height:0;overflow:auto;padding:16px;display:grid;align-content:start;gap:20px">
-        <div style="display:flex;flex-direction:column;gap:10px"><div style="font-size:22px;font-weight:800;line-height:1.25">${esc(x.issue_type)}</div>
+        <div style="display:flex;flex-direction:column;gap:10px"><div style="display:flex;flex-direction:column;gap:2px;padding:12px 14px;border-radius:10px;background:#FFF3C4;border-left:6px solid #F2B600"><div style="font-size:14px;font-weight:700;color:#6B5200">ประเภทปัญหา</div><div style="font-size:22px;font-weight:800;line-height:1.25;color:#1C1324;overflow-wrap:anywhere">${esc(x.issue_type)}</div></div>
           <div class="facts">${fact('ช่วงงานตัด', 'ช่วงที่ ' + x.seq)}${fact('รอบตรวจล่าสุด', 'ครั้งที่ ' + x.round_no)}${fact('พิกัด', x.lat.toFixed(5) + ', ' + x.lng.toFixed(5))}${fact('ระยะจากคุณ', fmtDist(distTo(x.lat, x.lng)))}</div></div>
         <div style="display:flex;flex-direction:column;gap:10px"><div style="font-size:17px;font-weight:800">เทียบภาพ ก่อน / หลัง</div>
           <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px">
