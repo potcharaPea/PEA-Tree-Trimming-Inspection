@@ -1,6 +1,9 @@
 // Service Worker — เปิดแอปได้ตอนไม่มีเน็ต
 // แก้ index.html แล้วอยากให้เครื่องผู้ใช้ได้ไฟล์ใหม่ทันที → เปลี่ยนเลขเวอร์ชันนี้
-const CACHE = 'tree-v18';
+const CACHE = 'tree-v19';
+// รูปแยกจาก CACHE เพื่อไม่ให้ถูกล้างแล้วโหลดใหม่ทุกครั้งที่เปลี่ยนเวอร์ชัน
+// ponytail: ไม่จำกัดจำนวนรูป เบราว์เซอร์ล้างเองเมื่อพื้นที่ใกล้เต็ม ถ้าเต็มบ่อยค่อยเพิ่มการลบรูปเก่า
+const PHOTOS = 'tree-photos';
 const APP = ['./', './index.html', './manifest.webmanifest',
   './icons/icon-192.png', './icons/icon-512.png', './icons/icon-maskable-512.png', './icons/apple-touch-icon.png',
   'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css',
@@ -14,10 +17,14 @@ self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => Promise.allSettled(APP.map(u => c.add(u)))).then(() => self.skipWaiting()));
 });
 self.addEventListener('activate', e => {
-  e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim()));
+  e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE && k !== PHOTOS).map(k => caches.delete(k)))).then(() => self.clients.claim()));
 });
 
-const put = (req, res) => { if (res.ok || res.type === 'opaque') caches.open(CACHE).then(c => c.put(req, res.clone())); return res; };
+// clone ทันที: ถ้ารอหลัง caches.open เบราว์เซอร์อาจใช้ body ไปแล้ว clone พัง และไม่มีอะไรถูกเก็บ
+const put = (req, res, name = CACHE) => {
+  if (res.ok || res.type === 'opaque') { const copy = res.clone(); caches.open(name).then(c => c.put(req, copy)).catch(e => console.warn('cache', e)); }
+  return res;
+};
 self.addEventListener('fetch', e => {
   const req = e.request, url = new URL(req.url);
   if (req.method !== 'GET') return;
@@ -28,7 +35,7 @@ self.addEventListener('fetch', e => {
   }
   // รูปจาก Storage: signed URL เปลี่ยน token ทุกครั้ง → จับคู่โดยไม่สนใจ query
   if (url.pathname.includes('/storage/v1/object/sign/')) {
-    e.respondWith(caches.match(req, { ignoreSearch: true }).then(hit => hit || fetch(req).then(r => put(req, r))));
+    e.respondWith(caches.match(req, { ignoreSearch: true, ignoreVary: true }).then(hit => hit || fetch(req).then(r => put(req, r, PHOTOS))));
     return;
   }
   // Supabase API / realtime: ไม่ cache (แอปจัดการออฟไลน์เองด้วย IndexedDB)
